@@ -66,6 +66,10 @@ func Init() *cobra.Command {
 				if err := mc.RunInitV1(ctx, opts); err != nil {
 					return err
 				}
+			} else if opts.GuestyV1 {
+				if err := mc.RunGuestyInitV1(ctx, opts); err != nil {
+					return err
+				}
 			} else {
 				_, err := mc.RunInitV2(ctx, opts)
 				return err
@@ -81,5 +85,6 @@ func Init() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.Version1, "v1", "", false, "create a v1 okteto manifest: www.okteto.com/docs/0.10/reference/manifest/")
 	cmd.Flags().BoolVarP(&opts.AutoDeploy, "deploy", "", false, "deploy the application after generate the okteto manifest")
 	cmd.Flags().BoolVarP(&opts.AutoConfigureDev, "configure-devs", "", false, "configure devs after deploying the application")
+	cmd.Flags().BoolVarP(&opts.GuestyV1, "guesty", "", true, "create a Guesty v1 okteto manifest")
 	return cmd
 }

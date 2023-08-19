@@ -57,6 +57,7 @@ type InitOpts struct {
 
 	ShowCTA  bool
 	Version1 bool
+	GuestyV1 bool
 
 	Language string
 	Workdir  string

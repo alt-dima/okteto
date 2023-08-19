@@ -45,6 +45,9 @@ bower_components
 # Compiled binary addons (https://nodejs.org/api/addons.html)
 build/Release
 
+# Exclude pnpm-store
+common/temp/pnpm-store
+
 # Dependency directories
 node_modules
 jspm_packages
