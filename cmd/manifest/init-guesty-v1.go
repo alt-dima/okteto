@@ -73,22 +73,22 @@ func (mc *ManifestCommand) RunGuestyInitV1(ctx context.Context, opts *InitOpts) 
 
 	//Loop over PiManifest
 	for i := 0; i < len(piManifest.Services) && len(piManifest.Services) != 0; i++ {
-		devs[piManifest.Services[i].Identity] = generateGuestyDev(piManifest.Services[i].Identity)
+		devs[piManifest.Services[i].Identity] = generateGuestyDev(piManifest.Services[i].Identity, "service")
 		//identitiesList = append(identitiesList, piManifest.Services[i].Identity)
 	}
 
 	for i := 0; i < len(piManifest.Workers) && len(piManifest.Workers) != 0; i++ {
-		devs[piManifest.Workers[i].Identity] = generateGuestyDev(piManifest.Workers[i].Identity)
+		devs[piManifest.Workers[i].Identity] = generateGuestyDev(piManifest.Workers[i].Identity, "worker")
 		//identitiesList = append(identitiesList, piManifest.Services[i].Identity)
 	}
 
 	for i := 0; i < len(piManifest.KConsumers) && len(piManifest.KConsumers) != 0; i++ {
-		devs[piManifest.KConsumers[i].Identity] = generateGuestyDev(piManifest.KConsumers[i].Identity)
+		devs[piManifest.KConsumers[i].Identity] = generateGuestyDev(piManifest.KConsumers[i].Identity, "kconsumer")
 		//identitiesList = append(identitiesList, piManifest.Services[i].Identity)
 	}
 
 	for i := 0; i < len(piManifest.Schedulers) && len(piManifest.Schedulers) != 0; i++ {
-		devs[piManifest.Schedulers[i].Identity] = generateGuestyDev(piManifest.Schedulers[i].Identity)
+		devs[piManifest.Schedulers[i].Identity] = generateGuestyDev(piManifest.Schedulers[i].Identity, "scheduler")
 		//identitiesList = append(identitiesList, piManifest.Services[i].Identity)
 	}
 
@@ -122,7 +122,7 @@ func (mc *ManifestCommand) RunGuestyInitV1(ctx context.Context, opts *InitOpts) 
 	return nil
 }
 
-func generateGuestyDev(devName string) *model.Dev {
+func generateGuestyDev(devName string, workloadType string) *model.Dev {
 	dev := &model.Dev{
 		Container:            devName,
 		Workdir:              "/appdev",
@@ -135,6 +135,7 @@ func generateGuestyDev(devName string) *model.Dev {
 		Forward:              []forward.Forward{forward.Forward{Local: 9229, Remote: 9229}, forward.Forward{Local: 3000, Remote: 3000}},
 		Resources:            model.ResourceRequirements{Limits: model.ResourceList{"cpu": resource.MustParse("1"), "memory": resource.MustParse("3Gi")}},
 		SecurityContext:      &model.SecurityContext{Capabilities: &model.Capabilities{Add: []apiv1.Capability{"fowner", "chown", "setuid", "setgid"}}},
+		NodeSelector:         map[string]string{"WorkloadType": workloadType},
 	}
 
 	return dev
