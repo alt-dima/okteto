@@ -25,6 +25,8 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/model/forward"
+	apiv1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 type piWorkload struct {
@@ -130,7 +132,9 @@ func generateGuestyDev(devName string) *model.Dev {
 		Command:              model.Command{Values: []string{"bash"}},
 		Sync:                 model.Sync{Folders: []model.SyncFolder{model.SyncFolder{LocalPath: ".", RemotePath: "/appdev"}}},
 		Environment:          model.Environment{model.EnvVar{Name: "DEBUG_PORT", Value: "9229"}},
-		Forward:              []forward.Forward{forward.Forward{Local: 9228, Remote: 9229}, forward.Forward{Local: 3001, Remote: 3000}},
+		Forward:              []forward.Forward{forward.Forward{Local: 9229, Remote: 9229}, forward.Forward{Local: 3000, Remote: 3000}},
+		Resources:            model.ResourceRequirements{Limits: model.ResourceList{"cpu": resource.MustParse("1"), "memory": resource.MustParse("3Gi")}},
+		SecurityContext:      &model.SecurityContext{Capabilities: &model.Capabilities{Add: []apiv1.Capability{"fowner", "chown", "setuid", "setgid"}}},
 	}
 
 	return dev
