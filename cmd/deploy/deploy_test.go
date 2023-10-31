@@ -16,6 +16,9 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +42,7 @@ import (
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/apps/v1"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,7 +69,6 @@ var errorManifest *model.Manifest = &model.Manifest{
 }
 
 type fakeRegistry struct {
-	err      error
 	registry map[string]fakeImage
 }
 
@@ -117,6 +120,9 @@ func (fr fakeRegistry) IsGlobalRegistry(image string) bool { return false }
 
 func (fr fakeRegistry) GetRegistryAndRepo(image string) (string, string) { return "", "" }
 func (fr fakeRegistry) GetRepoNameAndTag(repo string) (string, string)   { return "", "" }
+func (fr fakeRegistry) CloneGlobalImageToDev(imageWithDigest, tag string) (string, error) {
+	return "", nil
+}
 
 var fakeManifest *model.Manifest = &model.Manifest{
 	Deploy: &model.DeployInfo{
@@ -170,7 +176,9 @@ type fakeExecutor struct {
 }
 
 type fakeKubeConfig struct {
+	config      *rest.Config
 	errOnModify error
+	errRead     error
 }
 
 type fakeCmapHandler struct {
@@ -193,15 +201,15 @@ func (f *fakeCmapHandler) updateEnvsFromCommands(context.Context, string, string
 	return f.errUpdatingWithEnvs
 }
 
-func (*fakeKubeConfig) Read() (*rest.Config, error) {
-	return nil, nil
+func (f *fakeKubeConfig) Read() (*rest.Config, error) {
+	if f.errRead != nil {
+		return nil, f.errRead
+	}
+	return f.config, nil
 }
 
 func (fc *fakeKubeConfig) Modify(_ int, _, _ string) error {
 	return fc.errOnModify
-}
-func (*fakeKubeConfig) GetModifiedCMDAPIConfig() (*clientcmdapi.Config, error) {
-	return nil, nil
 }
 
 func (fk *fakeProxy) Start() {
@@ -240,6 +248,33 @@ func (fe *fakeExecutor) Execute(command model.DeployCommand, _ []string) error {
 
 func (*fakeExecutor) CleanUp(_ error) {}
 
+type fakeV2Builder struct {
+	buildErr             error
+	buildOptionsStorage  *types.BuildOptions
+	servicesAlreadyBuilt []string
+}
+
+func (b *fakeV2Builder) Build(_ context.Context, buildOptions *types.BuildOptions) error {
+	if b.buildErr != nil {
+		return b.buildErr
+	}
+	b.buildOptionsStorage = buildOptions
+	return nil
+}
+
+func (b *fakeV2Builder) GetServicesToBuild(_ context.Context, manifest *model.Manifest, servicesToDeploy []string) ([]string, error) {
+	toBuild := make(map[string]bool, len(manifest.Build))
+	for service := range manifest.Build {
+		toBuild[service] = true
+	}
+
+	return setToSlice(setDifference(setIntersection(toBuild, sliceToSet(servicesToDeploy)), sliceToSet(b.servicesAlreadyBuilt))), nil
+}
+
+func (*fakeV2Builder) GetBuildEnvVars() map[string]string {
+	return nil
+}
+
 func TestDeployWithErrorChangingKubeConfig(t *testing.T) {
 	p := &fakeProxy{}
 	e := &fakeExecutor{}
@@ -275,9 +310,28 @@ func TestDeployWithErrorChangingKubeConfig(t *testing.T) {
 	assert.False(t, p.started)
 }
 
+type fakeDeployer struct {
+	proxy                   *fakeProxy
+	executor                *fakeExecutor
+	kubeconfig              *fakeKubeConfig
+	fs                      afero.Fs
+	k8sClientProvider       *test.FakeK8sProvider
+	externalControlProvider fakeExternalControlProvider
+}
+
+func (d fakeDeployer) Get(_ context.Context, _ *Options, _ builderInterface, cmapHandler configMapHandler, _ okteto.K8sClientProvider, _ kubeConfigHandler, _ portGetterFunc) (deployerInterface, error) {
+	return &localDeployer{
+		Proxy:              d.proxy,
+		Executor:           d.executor,
+		Kubeconfig:         d.kubeconfig,
+		Fs:                 d.fs,
+		K8sClientProvider:  d.k8sClientProvider,
+		GetExternalControl: d.externalControlProvider.getFakeExternalControl,
+		ConfigMapHandler:   cmapHandler,
+	}, nil
+}
+
 func TestDeployWithErrorReadingManifestFile(t *testing.T) {
-	p := &fakeProxy{}
-	e := &fakeExecutor{}
 	okteto.CurrentStore = &okteto.OktetoContextStore{
 		Contexts: map[string]*okteto.OktetoContext{
 			"test": {
@@ -286,16 +340,15 @@ func TestDeployWithErrorReadingManifestFile(t *testing.T) {
 		},
 		CurrentContext: "test",
 	}
+	fakeDeployer := &fakeDeployer{
+		proxy:      &fakeProxy{},
+		executor:   &fakeExecutor{},
+		kubeconfig: &fakeKubeConfig{},
+		fs:         afero.NewMemMapFs(),
+	}
 	c := &DeployCommand{
-		GetManifest: getManifestWithError,
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:      p,
-				Executor:   e,
-				Kubeconfig: &fakeKubeConfig{},
-				Fs:         afero.NewMemMapFs(),
-			}, nil
-		},
+		GetManifest:       getManifestWithError,
+		GetDeployer:       fakeDeployer.Get,
 		K8sClientProvider: test.NewFakeK8sProvider(),
 	}
 	ctx := context.Background()
@@ -309,14 +362,18 @@ func TestDeployWithErrorReadingManifestFile(t *testing.T) {
 
 	assert.Error(t, err)
 	// No command was executed
-	assert.Len(t, e.executed, 0)
+	assert.Len(t, fakeDeployer.executor.executed, 0)
 	// Proxy wasn't started
-	assert.False(t, p.started)
+	assert.False(t, fakeDeployer.proxy.started)
 }
 
 func TestDeployWithNeitherDeployNorDependencyInManifestFile(t *testing.T) {
-	p := &fakeProxy{}
-	e := &fakeExecutor{}
+	fakeDeployer := &fakeDeployer{
+		proxy:      &fakeProxy{},
+		executor:   &fakeExecutor{},
+		kubeconfig: &fakeKubeConfig{},
+		fs:         afero.NewMemMapFs(),
+	}
 	okteto.CurrentStore = &okteto.OktetoContextStore{
 		Contexts: map[string]*okteto.OktetoContext{
 			"test": {
@@ -326,15 +383,8 @@ func TestDeployWithNeitherDeployNorDependencyInManifestFile(t *testing.T) {
 		CurrentContext: "test",
 	}
 	c := &DeployCommand{
-		GetManifest: getManifestWithNoDeployNorDependency,
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:      p,
-				Executor:   e,
-				Kubeconfig: &fakeKubeConfig{},
-				Fs:         afero.NewMemMapFs(),
-			}, nil
-		},
+		GetManifest:       getManifestWithNoDeployNorDependency,
+		GetDeployer:       fakeDeployer.Get,
 		K8sClientProvider: test.NewFakeK8sProvider(),
 	}
 	ctx := context.Background()
@@ -349,15 +399,25 @@ func TestDeployWithNeitherDeployNorDependencyInManifestFile(t *testing.T) {
 	assert.ErrorIs(t, err, oktetoErrors.ErrManifestFoundButNoDeployAndDependenciesCommands)
 
 	// No command was executed
-	assert.Len(t, e.executed, 0)
+	assert.Len(t, fakeDeployer.executor.executed, 0)
 	// Proxy wasn't started
-	assert.False(t, p.started)
+	assert.False(t, fakeDeployer.proxy.started)
 }
 
+type fakeAnalyticsTracker struct{}
+
+func (fakeAnalyticsTracker) TrackImageBuild(...*analytics.ImageBuildMetadata) {}
+
 func TestCreateConfigMapWithBuildError(t *testing.T) {
-	p := &fakeProxy{}
-	e := &fakeExecutor{
-		err: assert.AnError,
+	fakeK8sClientProvider := test.NewFakeK8sProvider()
+	fakeDeployer := &fakeDeployer{
+		proxy: &fakeProxy{},
+		executor: &fakeExecutor{
+			err: assert.AnError,
+		},
+		kubeconfig:        &fakeKubeConfig{},
+		fs:                afero.NewMemMapFs(),
+		k8sClientProvider: fakeK8sClientProvider,
 	}
 	opts := &Options{
 		Name:         "testErr",
@@ -366,24 +426,15 @@ func TestCreateConfigMapWithBuildError(t *testing.T) {
 		Build:        true,
 	}
 
-	clientProvider := test.NewFakeK8sProvider()
-
 	registry := newFakeRegistry()
 	builder := test.NewFakeOktetoBuilder(registry)
+	fakeTracker := fakeAnalyticsTracker{}
 	c := &DeployCommand{
-		GetManifest: getErrorManifest,
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:             p,
-				Executor:          e,
-				Kubeconfig:        &fakeKubeConfig{},
-				K8sClientProvider: clientProvider,
-				Fs:                afero.NewMemMapFs(),
-			}, nil
-		},
-		Builder:           buildv2.NewBuilder(builder, registry),
-		K8sClientProvider: clientProvider,
-		CfgMapHandler:     newDefaultConfigMapHandler(clientProvider),
+		GetManifest:       getErrorManifest,
+		GetDeployer:       fakeDeployer.Get,
+		Builder:           buildv2.NewBuilder(builder, registry, fakeTracker),
+		K8sClientProvider: fakeK8sClientProvider,
+		CfgMapHandler:     newDefaultConfigMapHandler(fakeK8sClientProvider),
 	}
 
 	ctx := context.Background()
@@ -401,7 +452,8 @@ func TestCreateConfigMapWithBuildError(t *testing.T) {
 	// sanitizeName is needed to check the CFGmap - this sanitization is done at RunDeploy, labels and cfg name
 	sanitizedName := format.ResourceK8sMetaString(opts.Name)
 
-	cfg, _ := configmaps.Get(ctx, pipeline.TranslatePipelineName(sanitizedName), okteto.Context().Namespace, fakeClient)
+	cfg, err := configmaps.Get(ctx, pipeline.TranslatePipelineName(sanitizedName), okteto.Context().Namespace, fakeClient)
+	assert.NoError(t, err)
 
 	expectedCfg := &apiv1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -432,11 +484,17 @@ func TestCreateConfigMapWithBuildError(t *testing.T) {
 }
 
 func TestDeployWithErrorExecutingCommands(t *testing.T) {
-	p := &fakeProxy{}
-	e := &fakeExecutor{
-		err: assert.AnError,
+	fakeOs := afero.NewMemMapFs()
+	fakeK8sClientProvider := test.NewFakeK8sProvider()
+	fakeDeployer := &fakeDeployer{
+		proxy: &fakeProxy{},
+		executor: &fakeExecutor{
+			err: assert.AnError,
+		},
+		kubeconfig:        &fakeKubeConfig{},
+		fs:                fakeOs,
+		k8sClientProvider: fakeK8sClientProvider,
 	}
-	clientProvider := test.NewFakeK8sProvider()
 	okteto.CurrentStore = &okteto.OktetoContextStore{
 		Contexts: map[string]*okteto.OktetoContext{
 			"test": {
@@ -446,19 +504,12 @@ func TestDeployWithErrorExecutingCommands(t *testing.T) {
 		CurrentContext: "test",
 	}
 	c := &DeployCommand{
-		GetManifest: getFakeManifest,
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:             p,
-				Executor:          e,
-				Kubeconfig:        &fakeKubeConfig{},
-				K8sClientProvider: clientProvider,
-				Fs:                afero.NewMemMapFs(),
-			}, nil
-		},
-		K8sClientProvider: clientProvider,
-		CfgMapHandler:     newDefaultConfigMapHandler(clientProvider),
-		Fs:                afero.NewMemMapFs(),
+		GetManifest:       getFakeManifest,
+		GetDeployer:       fakeDeployer.Get,
+		K8sClientProvider: fakeK8sClientProvider,
+		CfgMapHandler:     newDefaultConfigMapHandler(fakeK8sClientProvider),
+		Fs:                fakeOs,
+		Builder:           &fakeV2Builder{},
 	}
 	ctx := context.Background()
 	opts := &Options{
@@ -471,13 +522,13 @@ func TestDeployWithErrorExecutingCommands(t *testing.T) {
 
 	assert.Error(t, err)
 	// No command was executed
-	assert.Len(t, e.executed, 1)
+	assert.Len(t, fakeDeployer.executor.executed, 1)
 	// Check expected commands were executed
-	assert.Equal(t, fakeManifest.Deploy.Commands[0], e.executed[0])
+	assert.Equal(t, fakeManifest.Deploy.Commands[0], fakeDeployer.executor.executed[0])
 	// Proxy started
-	assert.True(t, p.started)
+	assert.True(t, fakeDeployer.proxy.started)
 	// Proxy shutdown
-	assert.True(t, p.shutdown)
+	assert.True(t, fakeDeployer.proxy.shutdown)
 
 	// check if configmap has been created
 	fakeClient, _, err := c.K8sClientProvider.Provide(clientcmdapi.NewConfig())
@@ -491,10 +542,36 @@ func TestDeployWithErrorExecutingCommands(t *testing.T) {
 }
 
 func TestDeployWithErrorBecauseOtherPipelineRunning(t *testing.T) {
-	p := &fakeProxy{
-		errOnShutdown: assert.AnError,
+	opts := &Options{
+		Name:         "movies",
+		ManifestPath: "",
+		Variables:    []string{},
 	}
-	e := &fakeExecutor{}
+	fakeK8sClientProvider := test.NewFakeK8sProvider(&apiv1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pipeline.TranslatePipelineName(opts.Name),
+			Namespace: "test",
+		},
+		Data: map[string]string{
+			"actionLock": "test",
+		},
+	}, &v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				model.DeployedByLabel: "movies",
+			},
+		},
+	})
+	fakeDeployer := &fakeDeployer{
+		proxy: &fakeProxy{
+			errOnShutdown: assert.AnError,
+		},
+		executor:          &fakeExecutor{},
+		kubeconfig:        &fakeKubeConfig{},
+		fs:                afero.NewMemMapFs(),
+		k8sClientProvider: fakeK8sClientProvider,
+	}
+
 	okteto.CurrentStore = &okteto.OktetoContextStore{
 		Contexts: map[string]*okteto.OktetoContext{
 			"test": {
@@ -503,41 +580,12 @@ func TestDeployWithErrorBecauseOtherPipelineRunning(t *testing.T) {
 		},
 		CurrentContext: "test",
 	}
-	opts := &Options{
-		Name:         "movies",
-		ManifestPath: "",
-		Variables:    []string{},
-	}
-	cmap := &apiv1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pipeline.TranslatePipelineName(opts.Name),
-			Namespace: "test",
-		},
-		Data: map[string]string{
-			"actionLock": "test",
-		},
-	}
-	deployment := &v1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				model.DeployedByLabel: "movies",
-			},
-		},
-	}
-	clientProvider := test.NewFakeK8sProvider(cmap, deployment)
+
 	c := &DeployCommand{
-		GetManifest: getFakeManifest,
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:             p,
-				Executor:          e,
-				Kubeconfig:        &fakeKubeConfig{},
-				K8sClientProvider: clientProvider,
-				Fs:                afero.NewMemMapFs(),
-			}, nil
-		},
-		K8sClientProvider: clientProvider,
-		CfgMapHandler:     newDefaultConfigMapHandler(clientProvider),
+		GetManifest:       getFakeManifest,
+		GetDeployer:       fakeDeployer.Get,
+		K8sClientProvider: fakeK8sClientProvider,
+		CfgMapHandler:     newDefaultConfigMapHandler(fakeK8sClientProvider),
 	}
 	ctx := context.Background()
 
@@ -545,9 +593,9 @@ func TestDeployWithErrorBecauseOtherPipelineRunning(t *testing.T) {
 
 	assert.Error(t, err)
 	// No command was executed
-	assert.Len(t, e.executed, 0)
+	assert.Len(t, fakeDeployer.executor.executed, 0)
 	// Proxy didn't start
-	assert.False(t, p.started)
+	assert.False(t, fakeDeployer.proxy.started)
 
 	// check if configmap has been created
 	fakeClient, _, err := c.K8sClientProvider.Provide(clientcmdapi.NewConfig())
@@ -560,18 +608,29 @@ func TestDeployWithErrorBecauseOtherPipelineRunning(t *testing.T) {
 }
 
 func TestDeployWithErrorShuttingdownProxy(t *testing.T) {
-	p := &fakeProxy{
-		errOnShutdown: assert.AnError,
-	}
-	deployment := &v1.Deployment{
+	fakeOs := afero.NewMemMapFs()
+	fakeK8sClientProvider := test.NewFakeK8sProvider(&v1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
 				model.DeployedByLabel: "movies",
 			},
 			Namespace: "test",
 		},
+	})
+	fakeExternalControlProvider := fakeExternalControlProvider{
+		control: &fakeExternalControl{},
 	}
-	e := &fakeExecutor{}
+	fakeDeployer := &fakeDeployer{
+		proxy: &fakeProxy{
+			errOnShutdown: assert.AnError,
+		},
+		executor:                &fakeExecutor{},
+		kubeconfig:              &fakeKubeConfig{},
+		fs:                      fakeOs,
+		k8sClientProvider:       fakeK8sClientProvider,
+		externalControlProvider: fakeExternalControlProvider,
+	}
+
 	okteto.CurrentStore = &okteto.OktetoContextStore{
 		Contexts: map[string]*okteto.OktetoContext{
 			"test": {
@@ -581,28 +640,15 @@ func TestDeployWithErrorShuttingdownProxy(t *testing.T) {
 		},
 		CurrentContext: "test",
 	}
-	cp := fakeExternalControlProvider{
-		control: &fakeExternalControl{},
-	}
-	clientProvider := test.NewFakeK8sProvider(deployment)
 	c := &DeployCommand{
-		GetManifest: getFakeManifest,
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:              p,
-				Executor:           e,
-				Kubeconfig:         &fakeKubeConfig{},
-				ConfigMapHandler:   &fakeCmapHandler{},
-				K8sClientProvider:  clientProvider,
-				GetExternalControl: cp.getFakeExternalControl,
-				Fs:                 afero.NewMemMapFs(),
-			}, nil
-		},
-		GetExternalControl: cp.getFakeExternalControl,
-		K8sClientProvider:  clientProvider,
+		GetManifest:        getFakeManifest,
+		GetDeployer:        fakeDeployer.Get,
+		GetExternalControl: fakeExternalControlProvider.getFakeExternalControl,
+		K8sClientProvider:  fakeK8sClientProvider,
 		EndpointGetter:     getFakeEndpoint,
-		CfgMapHandler:      newDefaultConfigMapHandler(clientProvider),
-		Fs:                 afero.NewMemMapFs(),
+		CfgMapHandler:      newDefaultConfigMapHandler(fakeK8sClientProvider),
+		Fs:                 fakeOs,
+		Builder:            &fakeV2Builder{},
 	}
 	ctx := context.Background()
 
@@ -616,13 +662,13 @@ func TestDeployWithErrorShuttingdownProxy(t *testing.T) {
 
 	assert.NoError(t, err)
 	// No command was executed
-	assert.Len(t, e.executed, 3)
+	assert.Len(t, fakeDeployer.executor.executed, 3)
 	// Check expected commands were executed
-	assert.Equal(t, fakeManifest.Deploy.Commands, e.executed)
+	assert.Equal(t, fakeManifest.Deploy.Commands, fakeDeployer.executor.executed)
 	// Proxy started
-	assert.True(t, p.started)
+	assert.True(t, fakeDeployer.proxy.started)
 	// Proxy wasn't shutdown
-	assert.False(t, p.shutdown)
+	assert.False(t, fakeDeployer.proxy.shutdown)
 
 	// check if configmap has been created
 	fakeClient, _, err := c.K8sClientProvider.Provide(clientcmdapi.NewConfig())
@@ -636,8 +682,27 @@ func TestDeployWithErrorShuttingdownProxy(t *testing.T) {
 }
 
 func TestDeployWithoutErrors(t *testing.T) {
-	p := &fakeProxy{}
-	e := &fakeExecutor{}
+	fakeOs := afero.NewMemMapFs()
+	fakeK8sClientProvider := test.NewFakeK8sProvider(&v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				model.DeployedByLabel: "movies",
+			},
+			Namespace: "test",
+		},
+	})
+	fakeExternalControlProvider := fakeExternalControlProvider{
+		control: &fakeExternalControl{},
+	}
+	fakeDeployer := &fakeDeployer{
+		proxy:                   &fakeProxy{},
+		executor:                &fakeExecutor{},
+		kubeconfig:              &fakeKubeConfig{},
+		fs:                      fakeOs,
+		k8sClientProvider:       fakeK8sClientProvider,
+		externalControlProvider: fakeExternalControlProvider,
+	}
+
 	okteto.CurrentStore = &okteto.OktetoContextStore{
 		Contexts: map[string]*okteto.OktetoContext{
 			"test": {
@@ -646,37 +711,16 @@ func TestDeployWithoutErrors(t *testing.T) {
 		},
 		CurrentContext: "test",
 	}
-	deployment := &v1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				model.DeployedByLabel: "movies",
-			},
-			Namespace: "test",
-		},
-	}
 
-	cp := fakeExternalControlProvider{
-		control: &fakeExternalControl{},
-	}
-	clientProvider := test.NewFakeK8sProvider(deployment)
 	c := &DeployCommand{
 		GetManifest:        getFakeManifest,
-		K8sClientProvider:  clientProvider,
+		K8sClientProvider:  fakeK8sClientProvider,
 		EndpointGetter:     getFakeEndpoint,
-		GetExternalControl: cp.getFakeExternalControl,
-		Fs:                 afero.NewMemMapFs(),
-		CfgMapHandler:      newDefaultConfigMapHandler(clientProvider),
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:              p,
-				Executor:           e,
-				Kubeconfig:         &fakeKubeConfig{},
-				ConfigMapHandler:   &fakeCmapHandler{},
-				K8sClientProvider:  clientProvider,
-				GetExternalControl: cp.getFakeExternalControl,
-				Fs:                 afero.NewMemMapFs(),
-			}, nil
-		},
+		GetExternalControl: fakeExternalControlProvider.getFakeExternalControl,
+		Fs:                 fakeOs,
+		CfgMapHandler:      newDefaultConfigMapHandler(fakeK8sClientProvider),
+		GetDeployer:        fakeDeployer.Get,
+		Builder:            &fakeV2Builder{},
 	}
 	ctx := context.Background()
 	opts := &Options{
@@ -689,13 +733,13 @@ func TestDeployWithoutErrors(t *testing.T) {
 
 	assert.NoError(t, err)
 	// No command was executed
-	assert.Len(t, e.executed, 3)
+	assert.Len(t, fakeDeployer.executor.executed, 3)
 	// Check expected commands were executed
-	assert.Equal(t, fakeManifest.Deploy.Commands, e.executed)
+	assert.Equal(t, fakeManifest.Deploy.Commands, fakeDeployer.executor.executed)
 	// Proxy started
-	assert.True(t, p.started)
+	assert.True(t, fakeDeployer.proxy.started)
 	// Proxy was shutdown
-	assert.True(t, p.shutdown)
+	assert.True(t, fakeDeployer.proxy.shutdown)
 
 	// check if configmap has been created
 	fakeClient, _, err := c.K8sClientProvider.Provide(clientcmdapi.NewConfig())
@@ -731,6 +775,7 @@ func getFakeManifestWithDependency(_ string) (*model.Manifest, error) {
 func TestBuildImages(t *testing.T) {
 	testCases := []struct {
 		name                 string
+		builder              *fakeV2Builder
 		build                bool
 		buildServices        []string
 		stack                *model.Stack
@@ -740,7 +785,10 @@ func TestBuildImages(t *testing.T) {
 		expectedImages       []string
 	}{
 		{
-			name:          "everything",
+			name: "everything",
+			builder: &fakeV2Builder{
+				servicesAlreadyBuilt: []string{"manifest B", "stack A"},
+			},
 			build:         false,
 			buildServices: []string{"manifest A", "manifest B", "stack A", "stack B"},
 			stack: &model.Stack{Services: map[string]*model.Service{
@@ -748,13 +796,13 @@ func TestBuildImages(t *testing.T) {
 				"stack B":             {Build: &model.BuildInfo{}},
 				"stack without build": {},
 			}},
-			servicesAlreadyBuilt: []string{"manifest B", "stack A"},
-			servicesToDeploy:     []string{"stack A", "stack without build"},
-			expectedError:        nil,
-			expectedImages:       []string{"manifest A"},
+			servicesToDeploy: []string{"stack A", "stack without build"},
+			expectedError:    nil,
+			expectedImages:   []string{"manifest A"},
 		},
 		{
 			name:             "nil stack",
+			builder:          &fakeV2Builder{},
 			build:            false,
 			buildServices:    []string{"manifest A", "manifest B"},
 			stack:            nil,
@@ -763,19 +811,22 @@ func TestBuildImages(t *testing.T) {
 			expectedImages:   []string{"manifest A", "manifest B"},
 		},
 		{
-			name:          "no services to deploy",
+			name: "no services to deploy",
+			builder: &fakeV2Builder{
+				servicesAlreadyBuilt: []string{"stack"},
+			},
 			build:         false,
 			buildServices: []string{"manifest", "stack"},
 			stack: &model.Stack{Services: map[string]*model.Service{
 				"stack": {Build: &model.BuildInfo{}},
 			}},
-			servicesAlreadyBuilt: []string{"stack"},
-			servicesToDeploy:     []string{},
-			expectedError:        nil,
-			expectedImages:       []string{"manifest"},
+			servicesToDeploy: []string{},
+			expectedError:    nil,
+			expectedImages:   []string{"manifest"},
 		},
 		{
 			name:          "no services already built",
+			builder:       &fakeV2Builder{},
 			build:         false,
 			buildServices: []string{"manifest A", "stack B", "stack C"},
 			stack: &model.Stack{Services: map[string]*model.Service{
@@ -787,20 +838,25 @@ func TestBuildImages(t *testing.T) {
 			expectedImages:   []string{"manifest A", "stack C"},
 		},
 		{
-			name:          "force build",
+			name: "force build",
+			builder: &fakeV2Builder{
+				servicesAlreadyBuilt: []string{"should be ignored since build is forced", "manifest A", "stack B"},
+			},
 			build:         true,
 			buildServices: []string{"manifest A", "manifest B", "stack A", "stack B"},
 			stack: &model.Stack{Services: map[string]*model.Service{
 				"stack A": {Build: &model.BuildInfo{}},
 				"stack B": {Build: &model.BuildInfo{}},
 			}},
-			servicesAlreadyBuilt: []string{"should be ignored since build is forced", "manifest A", "stack B"},
-			servicesToDeploy:     []string{"stack A", "stack B"},
-			expectedError:        nil,
-			expectedImages:       []string{"manifest A", "manifest B", "stack A", "stack B"},
+			servicesToDeploy: []string{"stack A", "stack B"},
+			expectedError:    nil,
+			expectedImages:   []string{"manifest A", "manifest B", "stack A", "stack B"},
 		},
 		{
-			name:          "force build specific services",
+			name: "force build specific services",
+			builder: &fakeV2Builder{
+				servicesAlreadyBuilt: []string{"should be ignored since build is forced", "manifest A", "stack B"},
+			},
 			build:         true,
 			buildServices: []string{"manifest A", "manifest B", "stack A", "stack B"},
 			stack: &model.Stack{Services: map[string]*model.Service{
@@ -808,30 +864,14 @@ func TestBuildImages(t *testing.T) {
 				"stack B":             {Build: &model.BuildInfo{}},
 				"stack without build": {},
 			}},
-			servicesAlreadyBuilt: []string{"should be ignored since build is forced", "manifest A", "stack B"},
-			servicesToDeploy:     []string{"stack A", "stack without build"},
-			expectedError:        nil,
-			expectedImages:       []string{"manifest A", "manifest B", "stack A"},
+			servicesToDeploy: []string{"stack A", "stack without build"},
+			expectedError:    nil,
+			expectedImages:   []string{"manifest A", "manifest B", "stack A"},
 		},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			buildOptionsStorage := &types.BuildOptions{}
-
-			build := func(ctx context.Context, buildOptions *types.BuildOptions) error {
-				buildOptionsStorage = buildOptions
-				return nil
-			}
-
-			getServicesToBuild := func(ctx context.Context, manifest *model.Manifest, servicesToDeploy []string) ([]string, error) {
-				toBuild := make(map[string]bool, len(manifest.Build))
-				for service := range manifest.Build {
-					toBuild[service] = true
-				}
-
-				return setToSlice(setDifference(setIntersection(toBuild, sliceToSet(servicesToDeploy)), sliceToSet(testCase.servicesAlreadyBuilt))), nil
-			}
 
 			deployOptions := &Options{
 				Build: testCase.build,
@@ -850,9 +890,9 @@ func TestBuildImages(t *testing.T) {
 				deployOptions.Manifest.Build[service] = &model.BuildInfo{}
 			}
 
-			err := buildImages(context.Background(), build, getServicesToBuild, deployOptions)
+			err := buildImages(context.Background(), testCase.builder, deployOptions)
 			assert.Equal(t, testCase.expectedError, err)
-			assert.Equal(t, sliceToSet(testCase.expectedImages), sliceToSet(buildOptionsStorage.CommandArgs))
+			assert.Equal(t, sliceToSet(testCase.expectedImages), sliceToSet(testCase.builder.buildOptionsStorage.CommandArgs))
 		})
 	}
 
@@ -865,7 +905,6 @@ type fakeExternalControl struct {
 
 type fakeExternalControlProvider struct {
 	control ExternalResourceInterface
-	err     error
 }
 
 func (f *fakeExternalControl) Deploy(_ context.Context, _ string, _ string, _ *externalresource.ExternalResource) error {
@@ -1059,47 +1098,36 @@ func TestDeployDependencies(t *testing.T) {
 }
 
 func TestDeployOnlyDependencies(t *testing.T) {
-	p := &fakeProxy{}
-	e := &fakeExecutor{}
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": {
-				Namespace: "test",
-			},
-		},
-		CurrentContext: "test",
-	}
-	deployment := &v1.Deployment{
+	fakeOs := afero.NewMemMapFs()
+	fakeK8sClientProvider := test.NewFakeK8sProvider(&v1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
 				model.DeployedByLabel: "movies",
 			},
 			Namespace: "test",
 		},
-	}
+	})
 
-	cp := fakeExternalControlProvider{
+	fakeExternalControlProvider := fakeExternalControlProvider{
 		control: &fakeExternalControl{},
 	}
-	clientProvider := test.NewFakeK8sProvider(deployment)
+	fakeDeployer := &fakeDeployer{
+		proxy:                   &fakeProxy{},
+		executor:                &fakeExecutor{},
+		kubeconfig:              &fakeKubeConfig{},
+		fs:                      fakeOs,
+		k8sClientProvider:       fakeK8sClientProvider,
+		externalControlProvider: fakeExternalControlProvider,
+	}
+
 	c := &DeployCommand{
 		PipelineCMD:        fakePipelineDeployer{nil},
 		GetManifest:        getFakeManifestWithDependency,
-		K8sClientProvider:  clientProvider,
-		GetExternalControl: cp.getFakeExternalControl,
-		Fs:                 afero.NewMemMapFs(),
-		CfgMapHandler:      newDefaultConfigMapHandler(clientProvider),
-		GetDeployer: func(ctx context.Context, manifest *model.Manifest, opts *Options, _ *buildv2.OktetoBuilder, _ configMapHandler) (deployerInterface, error) {
-			return &localDeployer{
-				Proxy:              p,
-				Executor:           e,
-				Kubeconfig:         &fakeKubeConfig{},
-				ConfigMapHandler:   &fakeCmapHandler{},
-				K8sClientProvider:  clientProvider,
-				GetExternalControl: cp.getFakeExternalControl,
-				Fs:                 afero.NewMemMapFs(),
-			}, nil
-		},
+		K8sClientProvider:  fakeK8sClientProvider,
+		GetExternalControl: fakeExternalControlProvider.getFakeExternalControl,
+		Fs:                 fakeOs,
+		CfgMapHandler:      newDefaultConfigMapHandler(fakeK8sClientProvider),
+		GetDeployer:        fakeDeployer.Get,
 	}
 	ctx := context.Background()
 	opts := &Options{
@@ -1108,14 +1136,46 @@ func TestDeployOnlyDependencies(t *testing.T) {
 		Variables:    []string{},
 	}
 
-	err := c.RunDeploy(ctx, opts)
+	tt := []struct {
+		name        string
+		expecterErr error
+		isOkteto    bool
+	}{
+		{
+			name:        "deploy dependency with no error",
+			expecterErr: nil,
+			isOkteto:    true,
+		},
+		{
+			name:        "error okteto not installed",
+			expecterErr: errDepenNotAvailableInVanilla,
+			isOkteto:    false,
+		},
+	}
 
-	assert.NoError(t, err)
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			okteto.CurrentStore = &okteto.OktetoContextStore{
+				Contexts: map[string]*okteto.OktetoContext{
+					"test": {
+						Namespace: "test",
+						IsOkteto:  tc.isOkteto,
+					},
+				},
+				CurrentContext: "test",
+			}
+
+			err := c.RunDeploy(ctx, opts)
+
+			require.ErrorIs(t, err, tc.expecterErr)
+		})
+	}
 }
 
 type fakeTracker struct{}
 
-func (*fakeTracker) TrackDeploy(dm analytics.DeployMetadata) {}
+func (*fakeTracker) TrackDeploy(analytics.DeployMetadata)             {}
+func (*fakeTracker) TrackImageBuild(...*analytics.ImageBuildMetadata) {}
 
 func TestTrackDeploy(t *testing.T) {
 	tt := []struct {
@@ -1162,6 +1222,204 @@ func TestTrackDeploy(t *testing.T) {
 			}
 
 			dc.trackDeploy(tc.manifest, tc.remoteFlag, time.Now(), tc.commandErr)
+		})
+	}
+}
+
+func TestShouldRunInRemoteDeploy(t *testing.T) {
+	var tempManifest *model.Manifest = &model.Manifest{
+		Deploy: &model.DeployInfo{
+			Remote: true,
+			Image:  "some-image",
+		},
+	}
+	var tests = []struct {
+		Name         string
+		opts         *Options
+		remoteDeploy string
+		remoteForce  string
+		expected     bool
+	}{
+		{
+			Name: "Okteto_Deploy_Remote env is set to True",
+			opts: &Options{
+				RunInRemote: false,
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     false,
+		},
+		{
+			Name: "Remote flag is set to True",
+			opts: &Options{
+				RunInRemote: true,
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     true,
+		},
+		{
+			Name: "Remote option set by manifest is True and Image is not nil",
+			opts: &Options{
+				Manifest: tempManifest,
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     true,
+		},
+		{
+			Name: "Remote option set by manifest is True and Image is nil",
+			opts: &Options{
+				Manifest: &model.Manifest{
+					Deploy: &model.DeployInfo{
+						Image:  "",
+						Remote: true,
+					},
+				},
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     true,
+		},
+		{
+			Name: "Remote option set by manifest is False and Image is nil",
+			opts: &Options{
+				Manifest: &model.Manifest{
+					Deploy: &model.DeployInfo{
+						Image:  "",
+						Remote: false,
+					},
+				},
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     false,
+		},
+		{
+			Name: "Okteto_Force_Remote env is set to True",
+			opts: &Options{
+				RunInRemote: true,
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     true,
+		},
+		{
+			Name: "Default case",
+			opts: &Options{
+				RunInRemote: false,
+			},
+			remoteDeploy: "",
+			remoteForce:  "",
+			expected:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			t.Setenv(constants.OktetoDeployRemote, string(tt.remoteDeploy))
+			t.Setenv(constants.OktetoForceRemote, string(tt.remoteForce))
+			result := shouldRunInRemote(tt.opts)
+			assert.Equal(t, result, tt.expected)
+		})
+	}
+}
+
+func TestOktetoManifestPathFlag(t *testing.T) {
+	opts := &Options{}
+	var tests = []struct {
+		name        string
+		manifest    string
+		expectedErr error
+	}{
+		{
+			name:        "manifest file path exists",
+			manifest:    "okteto.yml",
+			expectedErr: nil,
+		},
+		{
+			name:        "manifest file path doesn't exist",
+			manifest:    "nonexistent.yml",
+			expectedErr: fmt.Errorf("nonexistent.yml file doesn't exist"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewOsFs()
+			dir, err := os.Getwd()
+			assert.NoError(t, err)
+			fullpath := filepath.Join(dir, tt.manifest)
+			opts.ManifestPath = fullpath
+			if tt.manifest != "nonexistent.yml" {
+				// create the manifest file only if it's not the nonexistent scenario
+				f, err := fs.Create(fullpath)
+				assert.NoError(t, err)
+				defer func() {
+					if err := f.Close(); err != nil {
+						t.Fatalf("Error closing file %s: %s", fullpath, err)
+					}
+					if err := fs.RemoveAll(fullpath); err != nil {
+						t.Fatalf("Error removing the file %v", err)
+					}
+				}()
+			}
+			err = checkOktetoManifestPathFlag(opts, fs)
+			assert.Equal(t, tt.expectedErr, err)
+		})
+	}
+}
+
+func Test_GetDeployer(t *testing.T) {
+	dnsErr := &net.DNSError{
+		IsNotFound: true,
+	}
+	tests := []struct {
+		name        string
+		opts        *Options
+		portGetter  func(string) (int, error)
+		expectedErr error
+		isUserErr   bool
+	}{
+		{
+			name: "local deployer returns port user error",
+			opts: &Options{},
+			portGetter: func(_ string) (int, error) {
+				return 0, dnsErr
+			},
+			expectedErr: dnsErr,
+			isUserErr:   true,
+		},
+		{
+			name: "local deployer returns other error",
+			opts: &Options{},
+			portGetter: func(_ string) (int, error) {
+				return 0, assert.AnError
+			},
+			expectedErr: assert.AnError,
+		},
+		{
+			name: "local deployer returned",
+			opts: &Options{},
+			portGetter: func(_ string) (int, error) {
+				return 123456, nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.TODO()
+			got, err := GetDeployer(ctx, tt.opts, nil, &fakeCmapHandler{}, &fakeK8sProvider{}, &fakeKubeConfig{
+				config: &rest.Config{},
+			}, tt.portGetter)
+
+			if tt.expectedErr == nil {
+				require.NotNil(t, got)
+			}
+
+			require.ErrorIs(t, err, tt.expectedErr)
+			_, ok := err.(oktetoErrors.UserError)
+			require.True(t, tt.isUserErr == ok)
 		})
 	}
 }

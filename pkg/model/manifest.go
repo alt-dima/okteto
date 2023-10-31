@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/a8m/envsubst"
+	"github.com/a8m/envsubst/parse"
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/discovery"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
@@ -184,12 +185,14 @@ type DeployInfo struct {
 	ComposeSection *ComposeSectionInfo `json:"compose,omitempty" yaml:"compose,omitempty"`
 	Endpoints      EndpointSpec        `json:"endpoints,omitempty" yaml:"endpoints,omitempty"`
 	Divert         *DivertDeploy       `json:"divert,omitempty" yaml:"divert,omitempty"`
+	Remote         bool                `json:"remote,omitempty" yaml:"remote,omitempty"`
 }
 
 // DestroyInfo represents what must be destroyed for the app
 type DestroyInfo struct {
 	Image    string          `json:"image,omitempty" yaml:"image,omitempty"`
 	Commands []DeployCommand `json:"commands,omitempty" yaml:"commands,omitempty"`
+	Remote   bool            `json:"remote,omitempty" yaml:"remote,omitempty"`
 }
 
 // DivertDeploy represents information about the deploy divert configuration
@@ -626,7 +629,7 @@ func getOktetoManifest(devPath string) (*Manifest, error) {
 		if errors.Is(err, oktetoErrors.ErrNotManifestContentDetected) {
 			return nil, err
 		}
-		return nil, fmt.Errorf("%w: %s", oktetoErrors.ErrInvalidManifest, err.Error())
+		return nil, newManifestFriendlyError(err)
 	}
 
 	ef := externalresource.ERFilesystemManager{
@@ -636,7 +639,10 @@ func getOktetoManifest(devPath string) (*Manifest, error) {
 	for name, external := range manifest.External {
 		external.SetDefaults(name)
 		ef.ExternalResource = *external
-		ef.LoadMarkdownContent(devPath)
+		err := ef.LoadMarkdownContent(devPath)
+		if err != nil {
+			oktetoLog.Infof("error loading external resource %s: %s", name, err.Error())
+		}
 	}
 
 	for _, dev := range manifest.Dev {
@@ -665,6 +671,7 @@ func isEmptyManifestFile(bytes []byte) bool {
 // Read reads an okteto manifests
 func Read(bytes []byte) (*Manifest, error) {
 	manifest := NewManifest()
+
 	if bytes != nil {
 		if err := yaml.UnmarshalStrict(bytes, manifest); err != nil {
 			if err := yaml.Unmarshal(bytes, manifest); err == nil {
@@ -672,22 +679,7 @@ func Read(bytes []byte) (*Manifest, error) {
 					return nil, oktetoErrors.ErrNotManifestContentDetected
 				}
 			}
-
-			if strings.HasPrefix(err.Error(), "yaml: unmarshal errors:") {
-				var sb strings.Builder
-				l := strings.Split(err.Error(), "\n")
-				for i := 1; i < len(l); i++ {
-					e := strings.TrimSuffix(l[i], "in type model.Manifest")
-					e = strings.TrimSpace(e)
-					_, _ = sb.WriteString(fmt.Sprintf("    - %s\n", e))
-				}
-
-				_, _ = sb.WriteString(fmt.Sprintf("    See %s for details", "https://okteto.com/docs/reference/manifest/"))
-				return nil, fmt.Errorf("\n%s", sb.String())
-			}
-
-			msg := strings.TrimSuffix(err.Error(), "in type model.Manifest")
-			return nil, fmt.Errorf("\n%s", msg)
+			return nil, err
 		}
 	}
 
@@ -1018,6 +1010,70 @@ func (d *Dependency) GetTimeout(defaultTimeout time.Duration) time.Duration {
 		return d.Timeout
 	}
 	return defaultTimeout
+}
+
+// ExpandVars sets dependencies values if values fits with list params
+func (d *Dependency) ExpandVars(variables []string) error {
+	parser := parse.New("string", append(os.Environ(), variables...), &parse.Restrictions{})
+
+	expandedBranch, err := parser.Parse(d.Branch)
+	if err != nil {
+		return fmt.Errorf("error expanding 'branch': %w", err)
+	}
+	if expandedBranch != "" {
+		d.Branch = expandedBranch
+	}
+
+	expandedRepository, err := parser.Parse(d.Repository)
+	if err != nil {
+		return fmt.Errorf("error expanding 'repository': %w", err)
+	}
+	if expandedRepository != "" {
+		d.Repository = expandedRepository
+	}
+
+	expandedManifestPath, err := parser.Parse(d.ManifestPath)
+	if err != nil {
+		return fmt.Errorf("error expanding 'manifest': %w", err)
+	}
+	if expandedManifestPath != "" {
+		d.ManifestPath = expandedManifestPath
+	}
+
+	expandedNamespace, err := parser.Parse(d.Namespace)
+	if err != nil {
+		return fmt.Errorf("error expanding 'namespace': %w", err)
+	}
+	if expandedNamespace != "" {
+		d.Namespace = expandedNamespace
+	}
+
+	expandedVariables := Environment{}
+	for _, v := range d.Variables {
+		expandedVarName, err := parser.Parse(v.Name)
+		if err != nil {
+			return fmt.Errorf("error expanding variable name: %w", err)
+		}
+		if expandedVarName != "" {
+			v.Name = expandedVarName
+		}
+
+		expandedVarValue, err := parser.Parse(v.Value)
+		if err != nil {
+			return fmt.Errorf("error expanding variable value: %w", err)
+		}
+		if expandedVarValue != "" {
+			v.Value = expandedVarValue
+		}
+
+		expandedVariables = append(expandedVariables, EnvVar{
+			Name:  v.Name,
+			Value: v.Value,
+		})
+	}
+	d.Variables = expandedVariables
+
+	return nil
 }
 
 // InferFromStack infers data from a stackfile

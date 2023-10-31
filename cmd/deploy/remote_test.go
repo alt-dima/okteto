@@ -32,19 +32,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeBuilder struct {
+type fakeV1Builder struct {
 	err           error
 	assertOptions func(o *types.BuildOptions)
 }
 
-func (f fakeBuilder) Build(_ context.Context, opts *types.BuildOptions) error {
+func (f fakeV1Builder) Build(_ context.Context, opts *types.BuildOptions) error {
 	if f.assertOptions != nil {
 		f.assertOptions(opts)
 	}
 	return f.err
 }
 
-func (f fakeBuilder) IsV1() bool { return true }
+func (f fakeV1Builder) IsV1() bool { return true }
 
 func TestRemoteTest(t *testing.T) {
 	ctx := context.Background()
@@ -142,7 +142,7 @@ func TestRemoteTest(t *testing.T) {
 			wdCtrl.SetErrors(tt.config.wd)
 			tempCreator.SetError(tt.config.tempFsCreator)
 			rdc := remoteDeployCommand{
-				builderV1:            fakeBuilder{err: tt.config.builderErr},
+				builderV1:            fakeV1Builder{err: tt.config.builderErr},
 				fs:                   fs,
 				workingDirectoryCtrl: wdCtrl,
 				temporalCtrl:         tempCreator,
@@ -159,6 +159,43 @@ func TestRemoteTest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtraHosts(t *testing.T) {
+	ctx := context.Background()
+	fakeManifest := &model.Manifest{
+		Deploy: &model.DeployInfo{
+			Image: "test-image",
+		},
+	}
+	wdCtrl := filesystem.NewFakeWorkingDirectoryCtrl(filepath.Clean("/"))
+	fs := afero.NewMemMapFs()
+	tempCreator := filesystem.NewTemporalDirectoryCtrl(fs)
+
+	rdc := remoteDeployCommand{
+		builderV1: fakeV1Builder{
+			assertOptions: func(o *types.BuildOptions) {
+				require.Len(t, o.ExtraHosts, 2)
+				for _, eh := range o.ExtraHosts {
+					require.Equal(t, eh.IP, "1.2.3.4")
+				}
+			},
+		},
+		fs:                   fs,
+		workingDirectoryCtrl: wdCtrl,
+		temporalCtrl:         tempCreator,
+		clusterMetadata: func(context.Context) (*types.ClusterMetadata, error) {
+			return &types.ClusterMetadata{
+				ServerName: "1.2.3.4:443",
+			}, nil
+		},
+		getBuildEnvVars: func() map[string]string { return nil },
+	}
+
+	err := rdc.deploy(ctx, &Options{
+		Manifest: fakeManifest,
+	})
+	require.NoError(t, err)
 }
 
 func TestRemoteDeployWithSshAgent(t *testing.T) {
@@ -178,7 +215,7 @@ func TestRemoteDeployWithSshAgent(t *testing.T) {
 
 	envvarName := fmt.Sprintf("TEST_SOCKET_%s", os.Getenv("RANDOM"))
 
-	os.Setenv(envvarName, socket.Name())
+	t.Setenv(envvarName, socket.Name())
 	defer func() {
 		t.Logf("cleaning up %s envvar", envvarName)
 		os.Unsetenv(envvarName)
@@ -187,7 +224,7 @@ func TestRemoteDeployWithSshAgent(t *testing.T) {
 		sshAuthSockEnvvar:    envvarName,
 		getBuildEnvVars:      func() map[string]string { return nil },
 		knownHostsPath:       knowHostFile.Name(),
-		builderV1:            fakeBuilder{assertOptions: assertFn},
+		builderV1:            fakeV1Builder{assertOptions: assertFn},
 		fs:                   fs,
 		workingDirectoryCtrl: filesystem.NewFakeWorkingDirectoryCtrl(filepath.Clean("/")),
 		temporalCtrl:         filesystem.NewTemporalDirectoryCtrl(fs),
@@ -216,7 +253,7 @@ func TestRemoteDeployWithBadSshAgent(t *testing.T) {
 
 	envvarName := fmt.Sprintf("TEST_SOCKET_%s", os.Getenv("RANDOM"))
 
-	os.Setenv(envvarName, "bad-socket")
+	t.Setenv(envvarName, "bad-socket")
 	defer func() {
 		t.Logf("cleaning up %s envvar", envvarName)
 		os.Unsetenv(envvarName)
@@ -224,7 +261,7 @@ func TestRemoteDeployWithBadSshAgent(t *testing.T) {
 	rdc := remoteDeployCommand{
 		sshAuthSockEnvvar:    envvarName,
 		knownHostsPath:       "inexistent-file",
-		builderV1:            fakeBuilder{assertOptions: assertFn},
+		builderV1:            fakeV1Builder{assertOptions: assertFn},
 		fs:                   fs,
 		workingDirectoryCtrl: filesystem.NewFakeWorkingDirectoryCtrl(filepath.Clean("/")),
 		temporalCtrl:         filesystem.NewTemporalDirectoryCtrl(fs),
@@ -410,9 +447,7 @@ ENV OKTETO_BUIL_SVC_IMAGE ONE_VALUE
 ARG OKTETO_GIT_COMMIT
 ARG OKTETO_INVALIDATE_CACHE
 
-RUN \
-  mkdir -p $HOME/.docker && \
-  echo '{"credsStore":"okteto"}' > $HOME/.docker/config.json
+RUN okteto registrytoken install --force --log-output=json
 
 RUN --mount=type=secret,id=known_hosts --mount=id=remote,type=ssh \
   mkdir -p $HOME/.ssh && echo "UserKnownHostsFile=/run/secrets/known_hosts" >> $HOME/.ssh/config && \
@@ -491,4 +526,10 @@ func Test_getOktetoCLIVersion(t *testing.T) {
 			require.Equal(t, version, tt.expected)
 		})
 	}
+}
+
+func Test_newRemoteDeployer(t *testing.T) {
+	got := newRemoteDeployer(&fakeV2Builder{})
+	require.IsType(t, &remoteDeployCommand{}, got)
+	require.NotNil(t, got.getBuildEnvVars)
 }

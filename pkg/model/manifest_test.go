@@ -25,6 +25,7 @@ import (
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/model/forward"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/utils/pointer"
 )
@@ -188,7 +189,7 @@ echo $TEST_VAR`,
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for k, v := range tt.envs {
-				os.Setenv(k, v)
+				t.Setenv(k, v)
 			}
 
 			err := tt.manifest.ExpandEnvVars()
@@ -238,7 +239,7 @@ devs:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for k, v := range tt.envs {
-				os.Setenv(k, v)
+				t.Setenv(k, v)
 			}
 			m, err := Read(tt.manifest)
 			assert.NoError(t, err)
@@ -660,7 +661,7 @@ func TestInferFromStack(t *testing.T) {
 }
 
 func TestSetManifestDefaultsFromDev(t *testing.T) {
-	os.Setenv("my_key", "my_value")
+	t.Setenv("my_key", "my_value")
 	tests := []struct {
 		name              string
 		currentManifest   *Manifest
@@ -902,7 +903,6 @@ sync:
 			_, err := getManifestFromFile(dir, file)
 
 			assert.ErrorIs(t, err, tt.expectedErr)
-
 		})
 	}
 }
@@ -1145,6 +1145,54 @@ func Test_GetTimeout(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func Test_ExpandVars(t *testing.T) {
+	t.Setenv("MY_CUSTOM_VAR_FROM_ENVIRON", "varValueFromEnv")
+	dependency := Dependency{
+		Repository:   "${REPO}",
+		Branch:       "${NOBRANCHSET-$BRANCH}",
+		ManifestPath: "${NOMPATHSET=$MPATH}",
+		Namespace:    "${FOO+$SOME_NS_DEP_EXP}",
+		Variables: Environment{
+			EnvVar{
+				Name:  "MYVAR",
+				Value: "${AVARVALUE}",
+			},
+			EnvVar{
+				Name:  "$${ANAME}",
+				Value: "${MY_CUSTOM_VAR_FROM_ENVIRON}",
+			},
+		},
+	}
+	expected := Dependency{
+		Repository:   "my/repo",
+		Branch:       "myBranch",
+		ManifestPath: "api/okteto.yml",
+		Namespace:    "oktetoNs",
+		Variables: Environment{
+			EnvVar{
+				Name:  "MYVAR",
+				Value: "thisIsAValue",
+			},
+			EnvVar{
+				Name:  "${ANAME}",
+				Value: "varValueFromEnv",
+			},
+		},
+	}
+	envVariables := []string{
+		"FOO=BAR",
+		"REPO=my/repo",
+		"BRANCH=myBranch",
+		"MPATH=api/okteto.yml",
+		"SOME_NS_DEP_EXP=oktetoNs",
+		"AVARVALUE=thisIsAValue",
+	}
+
+	err := dependency.ExpandVars(envVariables)
+	require.NoError(t, err)
+	assert.Equal(t, expected, dependency)
 }
 
 func Test_Manifest_HasDeploySection(t *testing.T) {

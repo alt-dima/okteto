@@ -20,19 +20,20 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"text/template"
 
+	"github.com/okteto/okteto/pkg/config"
+
 	"github.com/mitchellh/go-homedir"
 
 	builder "github.com/okteto/okteto/cmd/build"
 	remoteBuild "github.com/okteto/okteto/cmd/build/remote"
-	buildv2 "github.com/okteto/okteto/cmd/build/v2"
 	"github.com/okteto/okteto/pkg/cmd/build"
-	"github.com/okteto/okteto/pkg/config"
 	"github.com/okteto/okteto/pkg/constants"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/filesystem"
@@ -76,9 +77,7 @@ ENV {{$key}} {{$val}}
 ARG {{ .GitCommitArgName }}
 ARG {{ .InvalidateCacheArgName }}
 
-RUN \
-  mkdir -p $HOME/.docker && \
-  echo '{"credsStore":"okteto"}' > $HOME/.docker/config.json
+RUN okteto registrytoken install --force --log-output=json
 
 RUN --mount=type=secret,id=known_hosts --mount=id=remote,type=ssh \
   mkdir -p $HOME/.ssh && echo "UserKnownHostsFile=/run/secrets/known_hosts" >> $HOME/.ssh/config && \
@@ -118,7 +117,7 @@ type remoteDeployCommand struct {
 }
 
 // newRemoteDeployer creates the remote deployer from a
-func newRemoteDeployer(builder *buildv2.OktetoBuilder) *remoteDeployCommand {
+func newRemoteDeployer(builder builderInterface) *remoteDeployCommand {
 	fs := afero.NewOsFs()
 	return &remoteDeployCommand{
 		getBuildEnvVars:      builder.GetBuildEnvVars,
@@ -193,6 +192,19 @@ func (rd *remoteDeployCommand) deploy(ctx context.Context, deployOptions *Option
 		fmt.Sprintf("%s=%d", constants.OktetoInvalidateCacheEnvVar, int(randomNumber.Int64())),
 	)
 
+	if sc.ServerName != "" {
+		registryUrl := okteto.Context().Registry
+		subdomain := strings.TrimPrefix(registryUrl, "registry.")
+		ip, _, err := net.SplitHostPort(sc.ServerName)
+		if err != nil {
+			return fmt.Errorf("failed to parse server name network address: %w", err)
+		}
+		buildOptions.ExtraHosts = []types.HostMap{
+			{Hostname: registryUrl, IP: ip},
+			{Hostname: fmt.Sprintf("kubernetes.%s", subdomain), IP: ip},
+		}
+	}
+
 	sshSock := os.Getenv(rd.sshAuthSockEnvvar)
 	if sshSock == "" {
 		sshSock = os.Getenv("SSH_AUTH_SOCK")
@@ -201,7 +213,6 @@ func (rd *remoteDeployCommand) deploy(ctx context.Context, deployOptions *Option
 	if sshSock != "" {
 		if _, err := os.Stat(sshSock); err != nil {
 			oktetoLog.Debugf("Not mounting ssh agent. Error reading socket: %s", err.Error())
-			sshSock = ""
 		} else {
 			sshSession := types.BuildSshSession{Id: "remote", Target: sshSock}
 			buildOptions.SshSessions = append(buildOptions.SshSessions, sshSession)
@@ -343,9 +354,10 @@ func (rd *remoteDeployCommand) getOriginalCWD(manifestPath string) (string, erro
 
 func getOktetoCLIVersion(versionString string) string {
 	var version string
-	if match, _ := regexp.MatchString(`\d+\.\d+\.\d+`, versionString); match {
+	if match, err := regexp.MatchString(`\d+\.\d+\.\d+`, versionString); match {
 		version = fmt.Sprintf(constants.OktetoCLIImageForRemoteTemplate, versionString)
 	} else {
+		oktetoLog.Infof("invalid version string: %s, using latest: %s", versionString, err)
 		remoteOktetoImage := os.Getenv(constants.OktetoDeployRemoteImage)
 		if remoteOktetoImage != "" {
 			version = remoteOktetoImage

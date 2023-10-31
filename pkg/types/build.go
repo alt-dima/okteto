@@ -27,6 +27,11 @@ type BuildSshSession struct {
 	Target string
 }
 
+type HostMap struct {
+	Hostname string
+	IP       string
+}
+
 // BuildOptions define the options available for build
 type BuildOptions struct {
 	BuildArgs     []string
@@ -50,4 +55,7 @@ type BuildOptions struct {
 	SshSessions []BuildSshSession
 
 	Manifest *model.Manifest
+	DevTag   string
+
+	ExtraHosts []HostMap
 }

@@ -62,6 +62,7 @@ const (
 	disableEvent             = "Disable Analytics"
 	stackNotSupportedField   = "Stack Field Not Supported"
 	buildPullErrorEvent      = "BuildPullError"
+	deleteContexts           = "Contexts Deletion"
 )
 
 var (
@@ -169,11 +170,8 @@ func TrackDownVolumes(success bool) {
 }
 
 // TrackPush sends a tracking event to mixpanel when the user pushes a development container
-func TrackPush(success bool, oktetoRegistryURL string) {
-	props := map[string]interface{}{
-		"oktetoRegistryURL": oktetoRegistryURL,
-	}
-	track(pushEvent, success, props)
+func TrackPush(success bool) {
+	track(pushEvent, success, nil)
 }
 
 // TrackRestart sends a tracking event to mixpanel when the user restarts a development environment
@@ -207,19 +205,13 @@ func trackDisable(success bool) {
 }
 
 // TrackBuild sends a tracking event to mixpanel when the user builds on remote
-func TrackBuild(oktetoBuilkitURL string, success bool) {
-	props := map[string]interface{}{
-		"oktetoBuilkitURL": oktetoBuilkitURL,
-	}
-	track(buildEvent, success, props)
+func TrackBuild(success bool) {
+	track(buildEvent, success, nil)
 }
 
 // TrackBuildTransientError sends a tracking event to mixpanel when the user build fails because of a transient error
-func TrackBuildTransientError(oktetoBuilkitURL string, success bool) {
-	props := map[string]interface{}{
-		"oktetoBuilkitURL": oktetoBuilkitURL,
-	}
-	track(buildTransientErrorEvent, success, props)
+func TrackBuildTransientError(success bool) {
+	track(buildTransientErrorEvent, success, nil)
 }
 
 // TrackDeployStack sends a tracking event to mixpanel when the user deploys a stack
@@ -279,11 +271,16 @@ func TrackStackWarnings(warnings []string) {
 }
 
 // TrackBuildPullError sends a tracking event to mixpanel when the build was success but the image can't be pulled from registry
-func TrackBuildPullError(oktetoBuilkitURL string, success bool) {
+func TrackBuildPullError(success bool) {
+	track(buildPullErrorEvent, success, nil)
+}
+
+// TrackContextDelete sends a tracking event to mixpanel indicating one or more context have been deleted
+func TrackContextDelete(ctxs int, success bool) {
 	props := map[string]interface{}{
-		"oktetoBuilkitURL": oktetoBuilkitURL,
+		"totalContextsDeleted": ctxs,
 	}
-	track(buildPullErrorEvent, success, props)
+	track(deleteContexts, success, props)
 }
 
 func track(event string, success bool, props map[string]interface{}) {
@@ -323,7 +320,6 @@ func track(event string, success bool, props map[string]interface{}) {
 	}
 	props["$os"] = mpOS
 	props["version"] = config.VersionString
-	props["$referring_domain"] = okteto.Context().Name
 	props["machine_id"] = get().MachineID
 	if okteto.Context().ClusterType != "" {
 		props["clusterType"] = okteto.Context().ClusterType
@@ -333,14 +329,15 @@ func track(event string, success bool, props map[string]interface{}) {
 	props["origin"] = origin
 	props["success"] = success
 	props["contextType"] = getContextType(okteto.Context().Name)
-	props["context"] = okteto.Context().Name
-	props["cluster"] = okteto.Context().Name
 	props["isOkteto"] = okteto.Context().IsOkteto
 	if termType := os.Getenv(model.TermEnvVar); termType == "" {
 		props["term-type"] = "other"
 	} else {
 		props["term-type"] = termType
 	}
+
+	props["context"] = okteto.Context().CompanyName
+	props["isTrial"] = okteto.Context().IsTrial
 
 	e := &mixpanel.Event{Properties: props}
 	if err := mixpanelClient.Track(getTrackID(), event, e); err != nil {

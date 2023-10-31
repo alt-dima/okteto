@@ -27,6 +27,7 @@ import (
 	"github.com/okteto/okteto/cmd/deploy"
 	pipelineCMD "github.com/okteto/okteto/cmd/pipeline"
 	"github.com/okteto/okteto/cmd/utils"
+	"github.com/okteto/okteto/pkg/analytics"
 	initCMD "github.com/okteto/okteto/pkg/cmd/init"
 	"github.com/okteto/okteto/pkg/cmd/pipeline"
 	"github.com/okteto/okteto/pkg/constants"
@@ -42,10 +43,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type analyticsTrackerInterface interface {
+	TrackImageBuild(meta ...*analytics.ImageBuildMetadata)
+}
+
 // ManifestCommand has all the namespaces subcommands
 type ManifestCommand struct {
 	manifest          *model.Manifest
 	K8sClientProvider okteto.K8sClientProvider
+	analyticsTracker  analyticsTrackerInterface
 }
 
 // InitOpts defines the option for manifest init
@@ -67,7 +73,7 @@ type InitOpts struct {
 }
 
 // Init automatically generates the manifest
-func Init() *cobra.Command {
+func Init(at analyticsTrackerInterface) *cobra.Command {
 	opts := &InitOpts{}
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -101,6 +107,7 @@ func Init() *cobra.Command {
 			opts.ShowCTA = oktetoLog.IsInteractive()
 			mc := &ManifestCommand{
 				K8sClientProvider: okteto.NewK8sClientProvider(),
+				analyticsTracker:  at,
 			}
 			if opts.Version1 {
 				if err := mc.RunInitV1(ctx, opts); err != nil {
@@ -136,7 +143,7 @@ func (mc *ManifestCommand) RunInitV2(ctx context.Context, opts *InitOpts) (*mode
 	manifest := model.NewManifest()
 	var err error
 	if !opts.Overwrite {
-		manifest, _ = model.GetManifestV2(opts.DevPath)
+		manifest, err = model.GetManifestV2(opts.DevPath)
 		if err != nil && !errors.Is(err, discovery.ErrOktetoManifestNotFound) {
 			return nil, err
 		}
@@ -278,7 +285,7 @@ func (mc *ManifestCommand) deploy(ctx context.Context, opts *InitOpts) error {
 		GetManifest:        mc.getManifest,
 		TempKubeconfigFile: deploy.GetTempKubeConfigFile(mc.manifest.Name),
 		K8sClientProvider:  mc.K8sClientProvider,
-		Builder:            buildv2.NewBuilderFromScratch(),
+		Builder:            buildv2.NewBuilderFromScratch(mc.analyticsTracker),
 		GetExternalControl: deploy.NewDeployExternalK8sControl,
 		Fs:                 afero.NewOsFs(),
 		CfgMapHandler:      deploy.NewConfigmapHandler(mc.K8sClientProvider),
@@ -347,9 +354,7 @@ func (mc *ManifestCommand) configureDevsByResources(ctx context.Context, namespa
 			return err
 		}
 		setFromImageConfig(dev, configFromImage)
-		if err := initCMD.SetImage(dev, language, path); err != nil {
-			return err
-		}
+		initCMD.SetImage(dev, language, path)
 		err = initCMD.SetDevDefaultsFromApp(ctx, dev, app, container, language, path)
 		if err != nil {
 			oktetoLog.Infof("could not get defaults from app: %s", err.Error())
@@ -397,7 +402,10 @@ func getPathFromApp(wd, appName string) string {
 	if fInfo, err := os.Stat(possibleAppPath); err != nil {
 		oktetoLog.Infof("could not detect path: %s", err)
 	} else if fInfo.IsDir() {
-		path, _ := filepath.Rel(wd, possibleAppPath)
+		path, err := filepath.Rel(wd, possibleAppPath)
+		if err != nil {
+			oktetoLog.Infof("could not get relative path: %s", err)
+		}
 		return path
 	}
 	return wd
