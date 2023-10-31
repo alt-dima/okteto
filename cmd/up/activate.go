@@ -78,7 +78,7 @@ func (up *upContext) activate() error {
 	}
 
 	if up.Dev.Keda {
-		keda.PauseKeda(app, up.RestConfig)
+		keda.PauseKeda(app)
 	}
 
 	if v, ok := app.ObjectMeta().Annotations[model.OktetoAutoCreateAnnotation]; up.Dev.Autocreate && (!ok || v != model.OktetoUpCmd) {

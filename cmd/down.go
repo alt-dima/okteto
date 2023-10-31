@@ -177,7 +177,7 @@ func runDown(ctx context.Context, dev *model.Dev, rm bool) error {
 	exit := make(chan error, 1)
 
 	go func() {
-		c, restConfig, err := okteto.GetK8sClient()
+		c, _, err := okteto.GetK8sClient()
 		if err != nil {
 			exit <- err
 			return
@@ -207,7 +207,7 @@ func runDown(ctx context.Context, dev *model.Dev, rm bool) error {
 		}
 
 		if dev.Keda {
-			keda.UnpauseKeda(app, restConfig)
+			keda.UnpauseKeda(app)
 		}
 
 		oktetoLog.Success(fmt.Sprintf("Development container '%s' deactivated", dev.Name))
