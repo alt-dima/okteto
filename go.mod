@@ -42,10 +42,10 @@ require (
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/whilp/git-urls v1.0.0
 	golang.org/x/crypto v0.14.0
-	golang.org/x/oauth2 v0.0.0-20220909003341-f21342109be1
-	golang.org/x/sync v0.0.0-20220907140024-f12130a52804
+	golang.org/x/oauth2 v0.2.0
+	golang.org/x/sync v0.1.0
 	golang.org/x/term v0.13.0
-	google.golang.org/grpc v1.47.0
+	google.golang.org/grpc v1.51.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.25.4
@@ -75,7 +75,7 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/acomagu/bufpipe v1.0.3 // indirect
 	github.com/agext/levenshtein v1.2.3
-	github.com/andybalholm/brotli v1.0.1 // indirect
+	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/aws/aws-sdk-go v1.44.292 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -150,7 +150,7 @@ require (
 	github.com/mholt/archiver/v3 v3.5.1
 	github.com/miekg/pkcs11 v1.0.3 // indirect
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/mitchellh/go-testing-interface v1.0.0 // indirect
+	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.0 // indirect
 	github.com/moby/spdystream v0.2.0 // indirect
 	github.com/moby/sys/mount v0.2.0 // indirect
@@ -224,13 +224,23 @@ require (
 )
 
 require (
-	github.com/kedacore/keda/v2 v2.9.3
 	github.com/hashicorp/go-multierror v1.1.1
+	github.com/kedacore/keda/v2 v2.9.3
 	istio.io/api v0.0.0-20221013011440-bc935762d2b9
 	istio.io/client-go v1.15.3
 )
 
-require github.com/hashicorp/errwrap v1.0.0 // indirect
+require (
+	cloud.google.com/go/compute v1.12.1 // indirect
+	cloud.google.com/go/compute/metadata v0.2.1 // indirect
+	cloud.google.com/go/iam v0.7.0 // indirect
+	github.com/evanphx/json-patch/v5 v5.6.0 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.2.0 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	gomodules.xyz/jsonpatch/v2 v2.2.0 // indirect
+	knative.dev/pkg v0.0.0-20221123154742-05b694ec4d3a // indirect
+	sigs.k8s.io/controller-runtime v0.13.1 // indirect
+)
 
 replace (
 	github.com/Sirupsen/logrus => github.com/sirupsen/logrus v1.8.0
