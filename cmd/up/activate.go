@@ -65,7 +65,7 @@ func (up *upContext) activate() error {
 
 	up.Disconnect = make(chan error, 1)
 	up.CommandResult = make(chan error, 1)
-	up.cleaned = make(chan string, 1)
+	up.bootstraped = make(chan string, 1)
 	up.hardTerminate = make(chan error, 1)
 
 	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
@@ -175,7 +175,7 @@ func (up *upContext) activate() error {
 		}
 		return fmt.Errorf("couldn't connect to your development container: %s", err.Error())
 	}
-	go up.cleanCommand(ctx)
+	go up.bootstrapCommand(ctx, up.Dev.BootstrapCommand)
 
 	if err := up.sync(ctx); err != nil {
 		if up.shouldRetry(ctx, err) {
@@ -188,7 +188,7 @@ func (up *upContext) activate() error {
 	up.success = true
 
 	go func() {
-		output := <-up.cleaned
+		output := <-up.bootstraped
 		oktetoLog.Debugf("clean command output: %s", output)
 
 		outByCommand := strings.Split(strings.TrimSpace(output), "\n")

@@ -94,6 +94,7 @@ type Dev struct {
 	EnvFiles             EnvFiles              `json:"envFiles,omitempty" yaml:"envFiles,omitempty"`
 	Environment          Environment           `json:"environment,omitempty" yaml:"environment,omitempty"`
 	Volumes              []Volume              `json:"volumes,omitempty" yaml:"volumes,omitempty"`
+	BootstrapCommand     string                `json:"bootstrapCommand,omitempty" yaml:"bootstrapCommand,omitempty"`
 	Mode                 string                `json:"mode,omitempty" yaml:"mode,omitempty"`
 	Keda                 bool                  `json:"keda,omitempty" yaml:"keda,omitempty"`
 
