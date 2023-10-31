@@ -363,13 +363,13 @@ func (ig *imageEnvsGetter) getEnvsFromImage(imageTag string) ([]string, error) {
 	return envs, nil
 }
 
-func (up *upContext) bootstrapCommand(ctx context.Context, additionalCmd string) {
+func (up *upContext) bootstrapCommand(ctx context.Context, bootstrapCommand string) {
 	in := strings.NewReader("\n")
 	var out bytes.Buffer
 
 	cmd := "cat /var/okteto/bin/version.txt; cat /proc/sys/fs/inotify/max_user_watches; /var/okteto/bin/clean >/dev/null 2>&1"
-	if additionalCmd != "" {
-		cmd = cmd + ";" + additionalCmd
+	if bootstrapCommand != "" {
+		cmd = cmd + ";" + bootstrapCommand
 	}
 
 	k8sClient, restConfig, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)

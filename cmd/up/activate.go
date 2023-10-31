@@ -170,7 +170,7 @@ func (up *upContext) activate() error {
 		}
 		return fmt.Errorf("couldn't connect to your development container: %s", err.Error())
 	}
-	go up.bootstrapCommand(ctx)
+	go up.bootstrapCommand(ctx, up.Dev.BootstrapCommand)
 
 	if err := up.sync(ctx); err != nil {
 		if up.shouldRetry(ctx, err) {
