@@ -63,7 +63,7 @@ type upContext struct {
 	CommandResult         chan error
 	Exit                  chan error
 	Sy                    *syncthing.Syncthing
-	cleaned               chan string
+	bootstraped           chan string
 	hardTerminate         chan error
 	success               bool
 	resetSyncthing        bool

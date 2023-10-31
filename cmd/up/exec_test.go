@@ -994,7 +994,7 @@ func TestCheckOktetoStartError(t *testing.T) {
 	}
 }
 
-func TestCleanCommand(t *testing.T) {
+func TestBootstrapCommand(t *testing.T) {
 	tt := []struct {
 		name              string
 		k8sClientProvider *test.FakeK8sProvider
@@ -1013,11 +1013,12 @@ func TestCleanCommand(t *testing.T) {
 			upCtx := &upContext{
 				K8sClientProvider: tt.k8sClientProvider,
 			}
-			upCtx.cleanCommand(context.Background())
+			additionalcmd := "echo additionalcmd"
+			upCtx.bootstrapCommand(context.Background(), additionalcmd)
 
 			var output string
 			select {
-			case out := <-upCtx.cleaned:
+			case out := <-upCtx.bootstraped:
 				output = out
 			default:
 				output = ""
