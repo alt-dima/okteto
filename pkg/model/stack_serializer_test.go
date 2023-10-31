@@ -985,10 +985,11 @@ func Test_validateCommandArgs(t *testing.T) {
 }
 
 func Test_validateVolumesUnmarshalling(t *testing.T) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	assert.NoError(t, err)
 	relativePathExpanded := filepath.Join(wd, "test_volume_relative_path_found")
 	relativePathExpandedFile := filepath.Join(wd, "test-file")
-	err := os.Mkdir("test_volume_relative_path_found", 0750)
+	err = os.Mkdir("test_volume_relative_path_found", 0750)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1718,9 +1719,7 @@ func Test_Environment(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if err := os.Setenv("OKTETO_ENVTEST", "myvalue"); err != nil {
-				t.Fatal(err)
-			}
+			t.Setenv("OKTETO_ENVTEST", "myvalue")
 
 			s, err := ReadStack(tt.manifest, false)
 			if err != nil {

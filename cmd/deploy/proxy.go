@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -31,6 +32,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/divert"
+	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/k8s/labels"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
@@ -71,10 +73,16 @@ type proxyHandler struct {
 }
 
 // NewProxy creates a new proxy
-func NewProxy(kubeconfig *KubeConfig) (*Proxy, error) {
+func NewProxy(kubeconfig kubeConfigHandler, portGetter portGetterFunc) (*Proxy, error) {
 	// Look for a free local port to start the proxy
-	port, err := model.GetAvailablePort("localhost")
+	port, err := portGetter("localhost")
 	if err != nil {
+		if dnsError, ok := err.(*net.DNSError); ok && dnsError.IsNotFound {
+			return nil, oktetoErrors.UserError{
+				E:    fmt.Errorf("could not find available ports: %w", dnsError),
+				Hint: "Review your configuration to make sure 'localhost' is resolved correctly",
+			}
+		}
 		oktetoLog.Errorf("could not find a free port to start proxy server: %s", err)
 		return nil, err
 	}
@@ -482,12 +490,12 @@ func (ph *proxyHandler) translateVirtualServiceSpec(body map[string]json.RawMess
 		return nil
 	}
 
-	var spec istioNetworkingV1beta1.VirtualService
+	var spec *istioNetworkingV1beta1.VirtualService
 	if err := json.Unmarshal(body["spec"], &spec); err != nil {
 		oktetoLog.Infof("error unmarshalling replicaset on proxy: %s", err.Error())
 		return nil
 	}
-	spec = ph.DivertDriver.UpdateVirtualService(spec)
+	ph.DivertDriver.UpdateVirtualService(spec)
 	specAsByte, err := json.Marshal(spec)
 	if err != nil {
 		return fmt.Errorf("could not process virtual service's spec: %s", err)

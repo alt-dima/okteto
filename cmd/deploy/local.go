@@ -47,7 +47,6 @@ type localDeployer struct {
 
 	GetExternalControl func(cfg *rest.Config) ExternalResourceInterface
 
-	cwd          string
 	deployWaiter DeployWaiter
 	isRemote     bool
 	Fs           afero.Fs
@@ -55,14 +54,14 @@ type localDeployer struct {
 }
 
 // newLocalDeployer initializes a local deployer from a name and a boolean indicating if we should run with bash or not
-func newLocalDeployer(ctx context.Context, options *Options, cmapHandler configMapHandler) (*localDeployer, error) {
+func newLocalDeployer(ctx context.Context, options *Options, cmapHandler configMapHandler, k8sProvider okteto.K8sClientProvider, kubeconfig kubeConfigHandler, portGetter portGetterFunc) (*localDeployer, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get the current working directory: %w", err)
 	}
 	tempKubeconfigName := options.Name
 	if tempKubeconfigName == "" {
-		c, _, err := okteto.NewK8sClientProvider().Provide(okteto.Context().Cfg)
+		c, _, err := k8sProvider.Provide(okteto.Context().Cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -73,24 +72,21 @@ func newLocalDeployer(ctx context.Context, options *Options, cmapHandler configM
 		}
 	}
 
-	kubeconfig := NewKubeConfig()
-
-	proxy, err := NewProxy(kubeconfig)
+	proxy, err := NewProxy(kubeconfig, portGetter)
 	if err != nil {
 		oktetoLog.Infof("could not configure local proxy: %s", err)
 		return nil, err
 	}
 
-	clientProvider := okteto.NewK8sClientProvider()
 	return &localDeployer{
 		Kubeconfig:         kubeconfig,
 		Executor:           executor.NewExecutor(oktetoLog.GetOutputFormat(), options.RunWithoutBash, ""),
 		ConfigMapHandler:   cmapHandler,
 		Proxy:              proxy,
 		TempKubeconfigFile: GetTempKubeConfigFile(tempKubeconfigName),
-		K8sClientProvider:  clientProvider,
+		K8sClientProvider:  k8sProvider,
 		GetExternalControl: NewDeployExternalK8sControl,
-		deployWaiter:       NewDeployWaiter(clientProvider),
+		deployWaiter:       NewDeployWaiter(k8sProvider),
 		isRemote:           true,
 		Fs:                 afero.NewOsFs(),
 	}, nil
@@ -266,7 +262,7 @@ func (ld *localDeployer) runDeploySection(ctx context.Context, opts *Options) er
 	if len(opts.Manifest.External) > 0 {
 		oktetoLog.SetStage("External configuration")
 		if !okteto.IsOkteto() {
-			oktetoLog.Warning("external resources cannot be deployed on a cluster not managed by okteto")
+			oktetoLog.Warning("external resources cannot be deployed on a context not managed by okteto")
 			return nil
 		}
 

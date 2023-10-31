@@ -66,6 +66,10 @@ const (
 	composeVolumesUrl = "https://www.okteto.com/docs/reference/compose/#volumes-string-optional"
 )
 
+var (
+	errConfigNotConfigured = fmt.Errorf("kubeconfig not found")
+)
+
 // UpOptions represents the options available on up command
 type UpOptions struct {
 	// ManifestPathFlag is the option -f as introduced by the user when executing this command.
@@ -86,7 +90,7 @@ type UpOptions struct {
 }
 
 // Up starts a development container
-func Up() *cobra.Command {
+func Up(at analyticsTrackerInterface) *cobra.Command {
 	upOptions := &UpOptions{}
 	cmd := &cobra.Command{
 		Use:   "up [svc]",
@@ -117,12 +121,11 @@ func Up() *cobra.Command {
 
 			ctx := context.Background()
 
-			analyticsTracker := analytics.NewAnalyticsTracker()
 			upMeta := analytics.NewUpMetricsMetadata()
 
 			// when cmd up finishes, send the event
 			// metadata retrieved during the run of the cmd
-			defer analyticsTracker.TrackUp(upMeta)
+			defer at.TrackUp(upMeta)
 
 			startOkContextConfig := time.Now()
 			if upOptions.ManifestPath != "" {
@@ -249,16 +252,19 @@ func Up() *cobra.Command {
 			}
 
 			up := &upContext{
-				Manifest:         oktetoManifest,
-				Dev:              nil,
-				Exit:             make(chan error, 1),
-				resetSyncthing:   upOptions.Reset,
-				StartTime:        time.Now(),
-				Registry:         registry.NewOktetoRegistry(okteto.Config{}),
-				Options:          upOptions,
-				Fs:               afero.NewOsFs(),
-				analyticsTracker: analyticsTracker,
-				analyticsMeta:    upMeta,
+				Manifest:          oktetoManifest,
+				Dev:               nil,
+				Exit:              make(chan error, 1),
+				resetSyncthing:    upOptions.Reset,
+				StartTime:         time.Now(),
+				Registry:          registry.NewOktetoRegistry(okteto.Config{}),
+				Options:           upOptions,
+				Fs:                afero.NewOsFs(),
+				analyticsTracker:  at,
+				analyticsMeta:     upMeta,
+				K8sClientProvider: okteto.NewK8sClientProvider(),
+				tokenUpdater:      newTokenUpdaterController(),
+				builder:           buildv2.NewBuilderFromScratch(at),
 			}
 			up.inFd, up.isTerm = term.GetFdInfo(os.Stdin)
 			if up.isTerm {
@@ -270,7 +276,8 @@ func Up() *cobra.Command {
 				}
 				oktetoLog.Infof("Terminal: %v", up.stateTerm)
 			}
-			up.Client, up.RestConfig, err = okteto.GetK8sClient()
+
+			k8sClient, _, err := okteto.GetK8sClient()
 			if err != nil {
 				return fmt.Errorf("failed to load k8s client: %v", err)
 			}
@@ -281,7 +288,7 @@ func Up() *cobra.Command {
 			if upOptions.Deploy && !up.Manifest.IsV2 {
 				// the autocreate property is forced to be true
 				forceAutocreate = true
-			} else if upOptions.Deploy || (up.Manifest.IsV2 && !pipeline.IsDeployed(ctx, up.Manifest.Name, up.Manifest.Namespace, up.Client)) {
+			} else if upOptions.Deploy || (up.Manifest.IsV2 && !pipeline.IsDeployed(ctx, up.Manifest.Name, up.Manifest.Namespace, k8sClient)) {
 				err := up.deployApp(ctx)
 
 				// only allow error.ErrManifestFoundButNoDeployAndDependenciesCommands to go forward - autocreate property will deploy the app
@@ -289,7 +296,7 @@ func Up() *cobra.Command {
 					return err
 				}
 
-			} else if !upOptions.Deploy && (up.Manifest.IsV2 && pipeline.IsDeployed(ctx, up.Manifest.Name, up.Manifest.Namespace, up.Client)) {
+			} else if !upOptions.Deploy && (up.Manifest.IsV2 && pipeline.IsDeployed(ctx, up.Manifest.Name, up.Manifest.Namespace, k8sClient)) {
 				oktetoLog.Information("'%s' was already deployed. To redeploy run 'okteto deploy' or 'okteto up --deploy'", up.Manifest.Name)
 			}
 
@@ -324,14 +331,15 @@ func Up() *cobra.Command {
 						oktetoLog.Infof("failed to create okteto client: '%s'", err.Error())
 						return
 					}
-					if err := wakeNamespaceIfApplies(ctx, up.Dev.Namespace, up.Client, okClient); err != nil {
+					if err := wakeNamespaceIfApplies(ctx, up.Dev.Namespace, k8sClient, okClient); err != nil {
 						// If there is an error waking up namespace, we don't want to fail the up command
 						oktetoLog.Infof("failed to wake up the namespace: %s", err.Error())
 					}
 				}()
 			}
 
-			if err := setBuildEnvVars(ctx, oktetoManifest); err != nil {
+			// build images and set env vars for the services at the manifest
+			if err := buildServicesAndSetBuildEnvs(ctx, oktetoManifest, up.builder); err != nil {
 				return err
 			}
 
@@ -421,7 +429,10 @@ func (o *UpOptions) AddArgs(cmd *cobra.Command, args []string) error {
 	maxV1Args := 1
 	docsURL := "https://okteto.com/docs/reference/cli/#up"
 	if len(args) > maxV1Args {
-		cmd.Help()
+		if err := cmd.Help(); err != nil {
+			oktetoLog.Infof("could not show help: %s", err)
+		}
+
 		return oktetoErrors.UserError{
 			E:    fmt.Errorf("%q accepts at most %d arg(s), but received %d", cmd.CommandPath(), maxV1Args, len(args)),
 			Hint: fmt.Sprintf("Visit %s for more information.", docsURL),
@@ -572,7 +583,7 @@ func (up *upContext) deployApp(ctx context.Context) error {
 		GetDeployer:        deploy.GetDeployer,
 		TempKubeconfigFile: deploy.GetTempKubeConfigFile(up.Manifest.Name),
 		K8sClientProvider:  k8sClientProvider,
-		Builder:            buildv2.NewBuilderFromScratch(),
+		Builder:            up.builder,
 		GetExternalControl: deploy.NewDeployExternalK8sControl,
 		Fs:                 up.Fs,
 		CfgMapHandler:      deploy.NewConfigmapHandler(k8sProvider),
@@ -724,6 +735,15 @@ func (up *upContext) activateLoop() {
 				continue
 			}
 
+			if errors.Is(err, okteto.ErrK8sUnauthorised) {
+				oktetoLog.Info("updating kubeconfig token")
+				if err := up.tokenUpdater.UpdateKubeConfigToken(); err != nil {
+					up.Exit <- fmt.Errorf("error updating k8s token: %w", err)
+					return
+				}
+				continue
+			}
+
 			if oktetoErrors.IsTransient(err) {
 				isTransientError = true
 				continue
@@ -775,9 +795,13 @@ func (up *upContext) waitUntilExitOrInterruptOrApply(ctx context.Context) error 
 }
 
 func (up *upContext) applyToApps(ctx context.Context) chan error {
+	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	if err != nil {
+		return nil
+	}
 	result := make(chan error, 1)
 	for _, tr := range up.Translations {
-		go tr.App.Watch(ctx, result, up.Client)
+		go tr.App.Watch(ctx, result, k8sClient)
 	}
 	return result
 }
@@ -1035,8 +1059,8 @@ func printDisplayContext(up *upContext) {
 	oktetoLog.Println()
 }
 
-func setBuildEnvVars(ctx context.Context, m *model.Manifest) error {
-	builder := buildv2.NewBuilderFromScratch()
+// buildServicesAndSetBuildEnvs get services to build and run build to set build envs
+func buildServicesAndSetBuildEnvs(ctx context.Context, m *model.Manifest, builder builderInterface) error {
 	svcsToBuild, err := builder.GetServicesToBuild(ctx, m, []string{})
 	if err != nil {
 		return err
@@ -1065,4 +1089,48 @@ func wakeNamespaceIfApplies(ctx context.Context, ns string, k8sClient kubernetes
 
 	oktetoLog.Information("Namespace '%s' is sleeping, waking it up...", ns)
 	return okClient.Namespaces().Wake(ctx, ns)
+}
+
+// tokenUpgrader updates the token of the config when the token is outdated
+type tokenUpdater interface {
+	UpdateKubeConfigToken() error
+}
+
+// oktetoClientProvider provides an okteto client ready to use or fail
+type oktetoClientProvider interface {
+	Provide(...okteto.Option) (types.OktetoInterface, error)
+}
+
+type tokenUpdaterController struct {
+	oktetoClientProvider oktetoClientProvider
+}
+
+func newTokenUpdaterController() *tokenUpdaterController {
+	return &tokenUpdaterController{
+		oktetoClientProvider: okteto.NewOktetoClientProvider(),
+	}
+}
+
+func (tuc *tokenUpdaterController) UpdateKubeConfigToken() error {
+	oktetoClient, err := tuc.oktetoClientProvider.Provide()
+	if err != nil {
+		return err
+	}
+	token, err := oktetoClient.Kubetoken().GetKubeToken(okteto.Context().Name, okteto.Context().Namespace)
+	if err != nil {
+		return err
+	}
+	// update the token in the okteto context for future client initializations
+	okCtx := okteto.Context()
+
+	ctxUserID := okCtx.UserID
+	cfg := okCtx.Cfg
+	if cfg == nil {
+		return errConfigNotConfigured
+	}
+	if _, ok := okCtx.Cfg.AuthInfos[ctxUserID]; !ok {
+		return fmt.Errorf("user %s not found in kubeconfig", ctxUserID)
+	}
+	okCtx.Cfg.AuthInfos[ctxUserID].Token = token.Status.Token
+	return nil
 }

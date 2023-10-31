@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	frontend = "dockerfile.v0"
+	defaultFrontend = "dockerfile.v0"
 )
 
 type buildWriter struct{}
@@ -80,6 +80,19 @@ func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
 	if buildOptions.NoCache {
 		frontendAttrs["no-cache"] = ""
 	}
+
+	frontend := defaultFrontend
+
+	if len(buildOptions.ExtraHosts) > 0 {
+		hosts := ""
+		for _, eh := range buildOptions.ExtraHosts {
+			hosts += fmt.Sprintf("%s=%s,", eh.Hostname, eh.IP)
+		}
+		frontend = "gateway.v0"
+		frontendAttrs["source"] = "docker/dockerfile"
+		frontendAttrs["add-hosts"] = strings.TrimSuffix(hosts, ",")
+	}
+
 	for _, buildArg := range buildOptions.BuildArgs {
 		kv := strings.SplitN(buildArg, "=", 2)
 		if len(kv) != 2 {
@@ -125,15 +138,29 @@ func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
 	}
 
 	if buildOptions.Tag != "" {
-		opt.Exports = []client.ExportEntry{
-			{
-				Type: "image",
-				Attrs: map[string]string{
-					"name": buildOptions.Tag,
-					"push": "true",
+		// add additional tag if DevTag is defined
+		if buildOptions.DevTag != "" {
+			opt.Exports = []client.ExportEntry{
+				{
+					Type: "image",
+					Attrs: map[string]string{
+						"name": strings.Join([]string{buildOptions.Tag, buildOptions.DevTag}, ","),
+						"push": "true",
+					},
 				},
-			},
+			}
+		} else {
+			opt.Exports = []client.ExportEntry{
+				{
+					Type: "image",
+					Attrs: map[string]string{
+						"name": buildOptions.Tag,
+						"push": "true",
+					},
+				},
+			}
 		}
+
 	}
 	for _, cacheFromImage := range buildOptions.CacheFrom {
 		opt.CacheImports = append(

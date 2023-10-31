@@ -2,9 +2,11 @@ package deploy
 
 import (
 	"encoding/json"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -12,6 +14,7 @@ var (
 )
 
 func Test_TranslateInvalidResourceBody(t *testing.T) {
+	t.Parallel()
 	var tests = []struct {
 		name string
 		body []byte
@@ -57,4 +60,45 @@ func Test_TranslateInvalidResourceSpec(t *testing.T) {
 	assert.NoError(t, ph.translateCronJobSpec(map[string]json.RawMessage{
 		"spec": []byte(`{"schedule": 1}`),
 	}))
+}
+
+func Test_NewProxy(t *testing.T) {
+	dnsErr := &net.DNSError{
+		IsNotFound: true,
+	}
+
+	tests := []struct {
+		name           string
+		portGetter     func(string) (int, error)
+		fakeKubeconfig *fakeKubeConfig
+		expectedProxy  *Proxy
+		expectedErr    error
+	}{
+		{
+			name:        "err getting port, DNS not found error",
+			portGetter:  func(string) (int, error) { return 0, dnsErr },
+			expectedErr: dnsErr,
+		},
+		{
+			name:        "err getting port, any error",
+			portGetter:  func(string) (int, error) { return 0, assert.AnError },
+			expectedErr: assert.AnError,
+		},
+		{
+			name:       "err reading kubeconfig",
+			portGetter: func(string) (int, error) { return 0, nil },
+			fakeKubeconfig: &fakeKubeConfig{
+				errRead: assert.AnError,
+			},
+			expectedErr: assert.AnError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewProxy(tt.fakeKubeconfig, tt.portGetter)
+			require.Equal(t, tt.expectedProxy, got)
+			require.ErrorIs(t, err, tt.expectedErr)
+		})
+	}
 }

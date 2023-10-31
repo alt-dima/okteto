@@ -16,6 +16,7 @@ package context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -41,23 +42,45 @@ type oktetoClientProvider interface {
 	Provide(...okteto.Option) (types.OktetoInterface, error)
 }
 
+type kubeconfigTokenController interface {
+	updateOktetoContextToken(*types.UserContext) error
+}
+
 // ContextCommand has the dependencies to run a ctxCommand
 type ContextCommand struct {
 	K8sClientProvider    okteto.K8sClientProvider
 	LoginController      login.LoginInterface
 	OktetoClientProvider oktetoClientProvider
 
+	kubetokenController kubeconfigTokenController
 	OktetoContextWriter okteto.ContextConfigWriterInterface
 }
 
+type ctxCmdOption func(*ContextCommand)
+
+func withKubeTokenController(k kubeconfigTokenController) ctxCmdOption {
+	return func(c *ContextCommand) {
+		c.kubetokenController = k
+	}
+}
+
 // NewContextCommand creates a new ContextCommand
-func NewContextCommand() *ContextCommand {
-	return &ContextCommand{
+func NewContextCommand(ctxCmdOption ...ctxCmdOption) *ContextCommand {
+	cfg := &ContextCommand{
 		K8sClientProvider:    okteto.NewK8sClientProvider(),
 		LoginController:      login.NewLoginController(),
 		OktetoClientProvider: okteto.NewOktetoClientProvider(),
 		OktetoContextWriter:  okteto.NewContextConfigWriter(),
 	}
+	if utils.LoadBoolean(OktetoUseStaticKubetokenEnvVar) {
+		cfg.kubetokenController = newStaticKubetokenController()
+	} else {
+		cfg.kubetokenController = newDynamicKubetokenController(cfg.OktetoClientProvider)
+	}
+	for _, o := range ctxCmdOption {
+		o(cfg)
+	}
+	return cfg
 }
 
 // CreateCMD adds a new cluster to okteto context
@@ -220,6 +243,15 @@ func (c *ContextCommand) UseContext(ctx context.Context, ctxOptions *ContextOpti
 	return nil
 }
 
+// getClusterMetadata runs the user query GetClusterMetadata and returns the response
+func getClusterMetadata(ctx context.Context, namespace string, okClientProvider oktetoClientProvider) (types.ClusterMetadata, error) {
+	okClient, err := okClientProvider.Provide()
+	if err != nil {
+		return types.ClusterMetadata{}, err
+	}
+	return okClient.User().GetClusterMetadata(ctx, namespace)
+}
+
 func hasAccessToNamespace(ctx context.Context, c *ContextCommand, ctxOptions *ContextOptions) (bool, error) {
 	if ctxOptions.IsOkteto {
 		okClient, err := c.OktetoClientProvider.Provide()
@@ -268,8 +300,18 @@ func (c *ContextCommand) initOktetoContext(ctx context.Context, ctxOptions *Cont
 		ctxOptions.Namespace = userContext.User.Namespace
 	}
 
+	clusterMetadata, err := getClusterMetadata(ctx, ctxOptions.Namespace, c.OktetoClientProvider)
+	if err != nil {
+		oktetoLog.Infof("error getting cluster metadata: %v", err)
+		return err
+	}
+
 	// once we have namespace and user identify we are able to retrieve the dynamic token for the namespace
-	replaceCredentialsTokenWithDynamicKubetoken(c.OktetoClientProvider, userContext)
+	err = c.kubetokenController.updateOktetoContextToken(userContext)
+	if err != nil {
+		// TODO: when the static token feature gets removed, we must return an error to the user here
+		oktetoLog.Infof("error updating okteto context token: %v", err)
+	}
 
 	okteto.AddOktetoContext(ctxOptions.Context, &userContext.User, ctxOptions.Namespace, userContext.User.Namespace)
 	cfg := kubeconfig.Get(config.GetKubeconfigPath())
@@ -281,41 +323,14 @@ func (c *ContextCommand) initOktetoContext(ctx context.Context, ctxOptions *Cont
 	okteto.Context().IsOkteto = true
 	okteto.Context().IsInsecure = okteto.IsInsecureSkipTLSVerifyPolicy()
 
+	okteto.Context().IsTrial = clusterMetadata.IsTrialLicense
+	okteto.Context().CompanyName = clusterMetadata.CompanyName
+
 	setSecrets(userContext.Secrets)
 
 	os.Setenv(model.OktetoUserNameEnvVar, okteto.Context().Username)
 
 	return nil
-}
-
-// replaceCredentialsTokenWithDynamicKubetoken retrieves a dynamic token for the given userContext and updates Credentials.Token
-// if error while retrieving the dynamic token or flag OKTETO_USE_STATIC_KUBETOKEN is enabled, value is not updated
-// static token is fallback
-func replaceCredentialsTokenWithDynamicKubetoken(okClientProvider oktetoClientProvider, userContext *types.UserContext) {
-	if utils.LoadBoolean(oktetoUseStaticKubetokenEnvVar) {
-		oktetoLog.Warning(usingStaticKubetokenWarningMessage)
-		return
-	}
-
-	if userContext.User.Namespace == "" {
-		oktetoLog.Debug("user context namespace is empty, fallback to static token")
-		return
-	}
-
-	c, err := okClientProvider.Provide()
-	if err != nil {
-		oktetoLog.Debugf("error providing the okteto client at replaceCredentialsTokenWithDynamicKubetoken: %w", err)
-		return
-	}
-
-	kubetoken, err := c.Kubetoken().GetKubeToken(okteto.Context().Name, userContext.User.Namespace)
-	if err != nil || kubetoken.Status.Token == "" {
-		oktetoLog.Debug("Dynamic kubernetes token not available: falling back to static token")
-		// TODO: when the static token feature gets removed, we must return an error here instead
-		return
-	}
-
-	userContext.Credentials.Token = kubetoken.Status.Token
 }
 
 func getLoggedUserContext(ctx context.Context, c *ContextCommand, ctxOptions *ContextOptions) (*types.UserContext, error) {
@@ -395,6 +410,10 @@ func (c ContextCommand) getUserContext(ctx context.Context, ctxName, ns, token s
 
 			// If there is a TLS error, don't continue the loop and return the raw error
 			if oktetoErrors.IsX509(err) {
+				return nil, err
+			}
+
+			if errors.Is(err, oktetoErrors.ErrInvalidLicense) {
 				return nil, err
 			}
 
