@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/okteto/okteto/pkg/env"
 	"github.com/okteto/okteto/pkg/filesystem"
 	"github.com/okteto/okteto/pkg/linguist"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
@@ -43,7 +44,7 @@ type piManifest struct {
 }
 
 // RunGuestyInitV1 initializes a new okteto manifest based on Guesty requirements
-func (mc *ManifestCommand) RunGuestyInitV1(ctx context.Context, opts *InitOpts) error {
+func (mc *Command) RunGuestyInitV1(ctx context.Context, opts *InitOpts) error {
 	//getting entity name by current folder name
 	entityName := filepath.Base(opts.Workdir)
 
@@ -133,7 +134,7 @@ func generateGuestyDev(devName string, workloadType string) *model.Dev {
 		Keda:                 true,
 		Command:              model.Command{Values: []string{"bash"}},
 		Sync:                 model.Sync{Folders: []model.SyncFolder{model.SyncFolder{LocalPath: ".", RemotePath: "/appdev"}}},
-		Environment:          model.Environment{model.EnvVar{Name: "DEBUG_PORT", Value: "9229"}},
+		Environment:          env.Environment{env.Var{Name: "DEBUG_PORT", Value: "9229"}},
 		Forward:              []forward.Forward{forward.Forward{Local: 9229, Remote: 9229}, forward.Forward{Local: 3000, Remote: 3000}},
 		Resources:            model.ResourceRequirements{Limits: model.ResourceList{"cpu": resource.MustParse("3"), "memory": resource.MustParse("4Gi")}},
 		SecurityContext:      &model.SecurityContext{Capabilities: &model.Capabilities{Add: []apiv1.Capability{"fowner", "chown", "setuid", "setgid"}}},
