@@ -100,7 +100,8 @@ type Dev struct {
 	Autocreate    bool `json:"autocreate,omitempty" yaml:"autocreate,omitempty"`
 	Healthchecks  bool `json:"healthchecks,omitempty" yaml:"healthchecks,omitempty"` // Deprecated field
 
-	Keda bool `json:"keda,omitempty" yaml:"keda,omitempty"`
+	Keda             bool   `json:"keda,omitempty" yaml:"keda,omitempty"`
+	BootstrapCommand string `json:"bootstrapCommand,omitempty" yaml:"bootstrapCommand,omitempty"`
 }
 
 type Affinity apiv1.Affinity
