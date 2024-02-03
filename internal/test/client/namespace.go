@@ -1,3 +1,5 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -20,8 +22,8 @@ import (
 
 // FakeNamespaceClient mocks the namespace interface
 type FakeNamespaceClient struct {
-	namespaces []types.Namespace
 	err        error
+	namespaces []types.Namespace
 
 	// WakeCalls is the number of times Wake was called
 	WakeCalls int

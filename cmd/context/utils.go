@@ -82,20 +82,15 @@ func isCreateNewContextOption(option string) bool {
 	return option == newOEOption
 }
 
-func askForOktetoURL() (string, error) {
-	clusterURL := okteto.CloudURL
-	ctxStore := okteto.ContextStore()
-	if oCtx, ok := ctxStore.Contexts[ctxStore.CurrentContext]; ok && oCtx.IsOkteto {
-		clusterURL = ctxStore.CurrentContext
-	}
-
-	err := oktetoLog.Question("Enter your Okteto URL [%s]: ", clusterURL)
+func askForOktetoURL(message string) (string, error) {
+	err := oktetoLog.Question(message)
 	if err != nil {
 		return "", err
 	}
-	fmt.Scanln(&clusterURL)
+	var oktetoURL string
+	fmt.Scanln(&oktetoURL)
 
-	url, err := url.Parse(clusterURL)
+	url, err := url.Parse(oktetoURL)
 	if err != nil {
 		return "", nil
 	}
@@ -158,7 +153,7 @@ func LoadManifestWithContext(ctx context.Context, opts ManifestOptions) (*model.
 		return nil, err
 	}
 
-	ctxOptions := &ContextOptions{
+	ctxOptions := &Options{
 		Context:   ctxResource.Context,
 		Namespace: ctxResource.Namespace,
 		Show:      true,
@@ -179,16 +174,16 @@ func LoadManifestWithContext(ctx context.Context, opts ManifestOptions) (*model.
 		}
 	}
 
-	manifest.Namespace = okteto.Context().Namespace
-	manifest.Context = okteto.Context().Name
+	manifest.Namespace = okteto.GetContext().Namespace
+	manifest.Context = okteto.GetContext().Name
 
 	for _, dev := range manifest.Dev {
 		if err := utils.LoadManifestRc(dev); err != nil {
 			return nil, err
 		}
 
-		dev.Namespace = okteto.Context().Namespace
-		dev.Context = okteto.Context().Name
+		dev.Namespace = okteto.GetContext().Namespace
+		dev.Context = okteto.GetContext().Name
 	}
 
 	return manifest, nil
@@ -207,7 +202,7 @@ func LoadStackWithContext(ctx context.Context, name, namespace string, stackPath
 		return nil, err
 	}
 
-	ctxOptions := &ContextOptions{
+	ctxOptions := &Options{
 		Context:   ctxResource.Context,
 		Namespace: ctxResource.Namespace,
 		Show:      true,
@@ -224,7 +219,7 @@ func LoadStackWithContext(ctx context.Context, name, namespace string, stackPath
 		}
 		s = &model.Stack{Name: name}
 	}
-	s.Namespace = okteto.Context().Namespace
+	s.Namespace = okteto.GetContext().Namespace
 	return s, nil
 }
 
@@ -243,7 +238,7 @@ func LoadContextFromPath(ctx context.Context, namespace, k8sContext, path string
 		return err
 	}
 
-	ctxOptions := &ContextOptions{
+	ctxOptions := &Options{
 		Context:   ctxResource.Context,
 		Namespace: ctxResource.Namespace,
 		Show:      true,

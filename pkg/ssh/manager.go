@@ -28,6 +28,10 @@ import (
 	forwardModel "github.com/okteto/okteto/pkg/model/forward"
 )
 
+const (
+	maxSystemPorts = 1024
+)
+
 // ForwardManager handles the lifecycle of all the forwards
 type ForwardManager struct {
 	localInterface  string
@@ -75,7 +79,7 @@ func (fm *ForwardManager) canAdd(localPort int, checkAvailable bool) error {
 	}
 
 	if !model.IsPortAvailable(fm.localInterface, localPort) {
-		if localPort <= 1024 {
+		if localPort <= maxSystemPorts {
 			os := runtime.GOOS
 			switch os {
 			case "darwin":
@@ -123,7 +127,8 @@ func (fm *ForwardManager) Start(devPod, namespace string) error {
 	oktetoLog.Info("starting SSH forward manager")
 
 	ticker := time.NewTicker(200 * time.Millisecond)
-	to := time.Now().Add(10 * time.Second)
+	timeoutDuration := 10 * time.Second
+	to := time.Now().Add(timeoutDuration)
 	retries := 0
 
 	for {
@@ -139,7 +144,7 @@ func (fm *ForwardManager) Start(devPod, namespace string) error {
 
 		c, err := getSSHClientConfig()
 		if err != nil {
-			return fmt.Errorf("failed to get SSH configuration: %s", err)
+			return fmt.Errorf("failed to get SSH configuration: %w", err)
 		}
 
 		oktetoLog.Infof("starting SSH connection pool on %s", fm.sshAddr)
@@ -203,8 +208,8 @@ func (fm *ForwardManager) TransformLabelsToServiceName(f forwardModel.Forward) (
 	return f, nil
 }
 
-// nolint:unparam
 // StartGlobalForwarding implements from the interface types.forwarder
+// nolint:unparam
 func (fm *ForwardManager) StartGlobalForwarding() error {
 	for _, gf := range fm.globalForwards {
 		gf.pool = fm.pool

@@ -23,6 +23,7 @@ import (
 	dockertypes "github.com/docker/cli/cli/config/types"
 	dockercredentials "github.com/docker/docker-credential-helpers/credentials"
 	"github.com/okteto/okteto/pkg/constants"
+	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/shurcooL/graphql"
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,7 @@ import (
 func TestGetContext(t *testing.T) {
 	globalNsErr := fmt.Errorf("Cannot query field \"globalNamespace\" on type \"me\"")
 	telemetryEnabledErr := fmt.Errorf("Cannot query field \"telemetryEnabled\" on type \"me\"")
+	tokenExpiredErr := fmt.Errorf("non-200 OK status code: 401 Unauthorized body: \"not-authorized: token is expired\\n\"")
 	type input struct {
 		client *fakeGraphQLClient
 	}
@@ -39,9 +41,9 @@ func TestGetContext(t *testing.T) {
 		err         error
 	}
 	testCases := []struct {
-		name     string
-		cfg      input
 		expected expected
+		cfg      input
+		name     string
 	}{
 		{
 			name: "error in graphql",
@@ -213,6 +215,19 @@ func TestGetContext(t *testing.T) {
 				err:         telemetryEnabledErr,
 			},
 		},
+		{
+			name: "error because token is expired",
+			cfg: input{
+				client: &fakeGraphQLClient{
+					queryResult: nil,
+					err:         tokenExpiredErr,
+				},
+			},
+			expected: expected{
+				userContext: nil,
+				err:         oktetoErrors.ErrTokenExpired,
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -231,12 +246,12 @@ func TestGetUserSecrets(t *testing.T) {
 		client *fakeGraphQLClient
 	}
 	type expected struct {
-		userSecrets []types.Secret
 		err         error
+		userSecrets []types.Secret
 	}
 	testCases := []struct {
-		name     string
 		cfg      input
+		name     string
 		expected expected
 	}{
 		{
@@ -302,9 +317,9 @@ func TestGetDeprecatedContext(t *testing.T) {
 		err         error
 	}
 	testCases := []struct {
-		name     string
-		cfg      input
 		expected expected
+		cfg      input
+		name     string
 	}{
 		{
 			name: "error in graphql",
@@ -455,6 +470,14 @@ func TestGetClusterMetadata(t *testing.T) {
 								Name:  "pipelineRunnerImage",
 								Value: "installer-runner-image",
 							},
+							{
+								Name:  "buildkitInternalIP",
+								Value: "10.10.10.10",
+							},
+							{
+								Name:  "publicDomain",
+								Value: "test.okteto.com",
+							},
 						},
 					},
 				},
@@ -464,6 +487,8 @@ func TestGetClusterMetadata(t *testing.T) {
 					Certificate:         []byte("cert"),
 					ServerName:          "1.1.1.1",
 					PipelineRunnerImage: "installer-runner-image",
+					BuildKitInternalIP:  "10.10.10.10",
+					PublicDomain:        "test.okteto.com",
 				},
 			},
 		},
@@ -731,13 +756,13 @@ func TestGetRegistryCredentials(t *testing.T) {
 		host   string
 	}
 	type expected struct {
+		expectErr       error
 		authConfig      dockertypes.AuthConfig
 		shouldExpectErr bool
-		expectErr       error
 	}
 	testCases := []struct {
-		name     string
 		cfg      input
+		name     string
 		expected expected
 	}{
 		{

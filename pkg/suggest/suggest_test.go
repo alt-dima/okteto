@@ -15,9 +15,10 @@ package suggest
 
 import (
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_errorSuggestion_suggest(t *testing.T) {
@@ -25,42 +26,42 @@ func Test_errorSuggestion_suggest(t *testing.T) {
 	returnSameErr := func(e error) error { return e }
 	emptyRule := NewRule(alwaysFalse, returnSameErr)
 
-	inputError := errors.New("line 4: field contex not found in type model.buildInfoRaw")
+	inputError := errors.New("line 4: field contest not found in type build.buildInfoRaw")
 
 	ruleNotFoundInBuildInfoRaw := NewRule(
 		func(e error) bool {
-			return strings.Contains(e.Error(), "not found in type model.buildInfoRaw")
+			return strings.Contains(e.Error(), "not found in type build.buildInfoRaw")
 		},
 		func(e error) error {
-			return errors.New(strings.Replace(e.Error(), "not found in type model.buildInfoRaw", "does not exist in the build section of the Okteto Manifest", 1))
+			return errors.New(strings.Replace(e.Error(), "not found in type build.buildInfoRaw", "does not exist in the build section of the Okteto Manifest", 1))
 		},
 	)
 
 	tests := []struct {
-		name          string
 		inputError    error
-		rules         []*Rule
+		name          string
 		expected      string
+		rules         []*Rule
 		expectedError bool
 	}{
 		{
 			name:       "basic Rule",
 			inputError: inputError,
 			rules:      []*Rule{ruleNotFoundInBuildInfoRaw},
-			expected:   "line 4: field contex does not exist in the build section of the Okteto Manifest",
+			expected:   "line 4: field contest does not exist in the build section of the Okteto Manifest",
 		},
 		{
 			name:       "suggesting closest word",
 			inputError: inputError,
 			rules: []*Rule{
 				NewLevenshteinRule(
-					"(.*?)field (\\w+) not found in type model.buildInfoRaw",
+					"(.*?)field (\\w+) not found in type build.buildInfoRaw",
 					"context",
 					2,
 				),
 				ruleNotFoundInBuildInfoRaw,
 			},
-			expected: "line 4: field contex does not exist in the build section of the Okteto Manifest. Did you mean \"context\"?",
+			expected: "line 4: field contest does not exist in the build section of the Okteto Manifest. Did you mean \"context\"?",
 		},
 		{
 			name:       "no matching Rule",
@@ -90,10 +91,10 @@ func Test_errorSuggestion_suggest(t *testing.T) {
 
 func Test_UserFriendlyError(t *testing.T) {
 	tests := []struct {
-		name       string
 		inputError error
-		inputRules []*Rule
+		name       string
 		expected   string
+		inputRules []*Rule
 	}{
 		{
 			name:     "with nil error",

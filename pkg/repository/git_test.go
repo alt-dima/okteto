@@ -14,12 +14,14 @@
 package repository
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,13 +30,13 @@ func TestIsClean(t *testing.T) {
 		repositoryGetter *fakeRepositoryGetter
 	}
 	type expected struct {
-		isClean bool
 		err     error
+		isClean bool
 	}
 	var tests = []struct {
-		name     string
-		config   config
 		expected expected
+		config   config
+		name     string
 	}{
 		{
 			name: "dir is not a repository",
@@ -194,13 +196,13 @@ func TestGetSHA(t *testing.T) {
 		repositoryGetter *fakeRepositoryGetter
 	}
 	type expected struct {
-		sha string
 		err error
+		sha string
 	}
 	var tests = []struct {
-		name     string
-		config   config
 		expected expected
+		config   config
+		name     string
 	}{
 		{
 			name: "get sha without any problem",
@@ -298,60 +300,40 @@ func TestGetSHA(t *testing.T) {
 	}
 }
 
-func TestGetTreeHash(t *testing.T) {
+func TestGetLatestDirCommit(t *testing.T) {
 	type config struct {
 		repositoryGetter *fakeRepositoryGetter
 	}
 	type expected struct {
-		sha string
 		err error
+		sha string
 	}
 	var tests = []struct {
-		name         string
-		config       config
-		buildContext string
 		expected     expected
+		config       config
+		name         string
+		buildContext string
 	}{
 		{
-			name: "get tree hash without any problem",
+			name: "get hash without any problem",
 			config: config{
 				repositoryGetter: &fakeRepositoryGetter{
 					repository: []*fakeRepository{
 						{
-							worktree: &fakeWorktree{
-								status: oktetoGitStatus{
-									status: git.Status{
-										"test-file.go": &git.FileStatus{
-											Staging:  git.Unmodified,
-											Worktree: git.Unmodified,
-										},
-									},
-								},
-							},
-							head: plumbing.NewHashReference("test", plumbing.NewHash("test")),
-							commit: &fakeCommit{
-								tree: &object.Tree{
-									Entries: []object.TreeEntry{
-										{
-											Name: "test",
-											Hash: plumbing.NewHash("test"),
-										},
-									},
-								},
-							},
-							err: nil,
+							commit: "hash",
+							err:    nil,
 						},
 					},
 				},
 			},
 			buildContext: "test",
 			expected: expected{
-				sha: plumbing.NewHash("test").String(),
+				sha: "hash",
 				err: nil,
 			},
 		},
 		{
-			name: "get tree hash with error retrieving repo",
+			name: "get build context hash with error retrieving repo",
 			config: config{
 				repositoryGetter: &fakeRepositoryGetter{
 					err: []error{assert.AnError},
@@ -364,23 +346,13 @@ func TestGetTreeHash(t *testing.T) {
 			},
 		},
 		{
-			name: "get tree hash with error getting head",
+			name: "get build context hash with error getting head",
 			config: config{
 				repositoryGetter: &fakeRepositoryGetter{
 					repository: []*fakeRepository{
 						{
-							worktree: &fakeWorktree{
-								status: oktetoGitStatus{
-									status: git.Status{
-										"test-file.go": &git.FileStatus{
-											Staging:  git.Unmodified,
-											Worktree: git.Unmodified,
-										},
-									},
-								},
-							},
-							head: plumbing.NewHashReference("test", plumbing.NewHash("test")),
-							err:  assert.AnError,
+							commit: "",
+							err:    assert.AnError,
 						},
 					},
 				},
@@ -391,8 +363,37 @@ func TestGetTreeHash(t *testing.T) {
 				err: assert.AnError,
 			},
 		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := Repository{
+				control: gitRepoController{
+					repoGetter: tt.config.repositoryGetter,
+				},
+			}
+			commit, err := repo.GetLatestDirCommit(tt.buildContext)
+			assert.ErrorIs(t, err, tt.expected.err)
+			assert.Equal(t, tt.expected.sha, commit)
+		})
+	}
+}
+
+func TestGetDiffHash(t *testing.T) {
+	type config struct {
+		repositoryGetter *fakeRepositoryGetter
+	}
+	type expected struct {
+		err error
+		sha string
+	}
+	var tests = []struct {
+		expected     expected
+		config       config
+		name         string
+		buildContext string
+	}{
 		{
-			name: "get tree hash with error getting commit",
+			name: "get hash without any problem",
 			config: config{
 				repositoryGetter: &fakeRepositoryGetter{
 					repository: []*fakeRepository{
@@ -407,78 +408,15 @@ func TestGetTreeHash(t *testing.T) {
 									},
 								},
 							},
-							head:         plumbing.NewHashReference("test", plumbing.NewHash("test")),
-							failInCommit: true,
-							err:          assert.AnError,
+							commit: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+							err:    nil,
 						},
 					},
 				},
 			},
 			buildContext: "test",
 			expected: expected{
-				sha: "",
-				err: assert.AnError,
-			},
-		},
-		{
-			name: "get tree hash with error getting tree",
-			config: config{
-				repositoryGetter: &fakeRepositoryGetter{
-					repository: []*fakeRepository{
-						{
-							worktree: &fakeWorktree{
-								status: oktetoGitStatus{
-									status: git.Status{
-										"test-file.go": &git.FileStatus{
-											Staging:  git.Unmodified,
-											Worktree: git.Unmodified,
-										},
-									},
-								},
-							},
-							head: plumbing.NewHashReference("test", plumbing.NewHash("test")),
-							commit: &fakeCommit{
-								err: assert.AnError,
-							},
-						},
-					},
-				},
-			},
-			buildContext: "test",
-			expected: expected{
-				sha: "",
-				err: assert.AnError,
-			},
-		},
-		{
-			name: "get tree hash with context == .",
-			config: config{
-				repositoryGetter: &fakeRepositoryGetter{
-					repository: []*fakeRepository{
-						{
-							worktree: &fakeWorktree{
-								status: oktetoGitStatus{
-									status: git.Status{
-										"test-file.go": &git.FileStatus{
-											Staging:  git.Unmodified,
-											Worktree: git.Unmodified,
-										},
-									},
-								},
-							},
-							head: plumbing.NewHashReference("test", plumbing.NewHash("test")),
-							commit: &fakeCommit{
-								tree: &object.Tree{
-									Hash: plumbing.NewHash("tree"),
-								},
-							},
-						},
-					},
-				},
-			},
-			buildContext: ".",
-			expected: expected{
-				sha: plumbing.NewHash("tree").String(),
+				sha: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 				err: nil,
 			},
 		},
@@ -490,9 +428,187 @@ func TestGetTreeHash(t *testing.T) {
 					repoGetter: tt.config.repositoryGetter,
 				},
 			}
-			treeHash, err := repo.GetTreeHash(tt.buildContext)
+			commit, err := repo.GetDiffHash(tt.buildContext)
 			assert.ErrorIs(t, err, tt.expected.err)
-			assert.Equal(t, tt.expected.sha, treeHash)
+			assert.Equal(t, tt.expected.sha, commit)
+		})
+	}
+}
+
+func TestFindTopLevelGitDir(t *testing.T) {
+	type input struct {
+		mockFs func() afero.Fs
+		cwd    string
+	}
+
+	rootDir, err := filepath.Abs(filepath.Clean("/tmp"))
+	assert.NoError(t, err)
+
+	tests := []struct {
+		input        input
+		expectedErr  error
+		name         string
+		expectedPath string
+	}{
+		{
+			name: "not found",
+			input: input{
+				cwd: filepath.Join(rootDir, "example", "services", "api"),
+				mockFs: func() afero.Fs {
+					return afero.NewMemMapFs()
+				},
+			},
+			expectedPath: "",
+			expectedErr:  errFindingRepo,
+		},
+		{
+			name: "invalid working dir",
+			input: input{
+				cwd: "@",
+				mockFs: func() afero.Fs {
+					return afero.NewMemMapFs()
+				},
+			},
+			expectedPath: "",
+			expectedErr:  errFindingRepo,
+		},
+		{
+			name: "found",
+			input: input{
+				cwd: filepath.Join(rootDir, "example", "services", "api"),
+				mockFs: func() afero.Fs {
+					fs := afero.NewMemMapFs()
+					gitDirPath := filepath.Join(rootDir, "example", ".git")
+					_, err := fs.Create(gitDirPath)
+					assert.NoError(t, err)
+					return fs
+				},
+			},
+			expectedPath: filepath.Join(rootDir, "example"),
+			expectedErr:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := tt.input.mockFs()
+			path, err := FindTopLevelGitDir(tt.input.cwd, fs)
+
+			if tt.expectedErr != nil {
+				assert.ErrorIs(t, err, tt.expectedErr)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.expectedPath, path)
+		})
+	}
+}
+
+func TestGetUntrackedContent(t *testing.T) {
+	type input struct {
+		mockFs func() afero.Fs
+		files  []string
+	}
+
+	type output struct {
+		expectedErr      error
+		untrackedContent string
+	}
+
+	testFile1 := filepath.Clean("/tmp/example/services/api/test.go")
+	testFile2 := filepath.Clean("/tmp/example/services/api/test2.go")
+
+	tests := []struct {
+		output output
+		name   string
+		input  input
+	}{
+		{
+			name: "no untracked files",
+			input: input{
+				files: []string{},
+				mockFs: func() afero.Fs {
+					return afero.NewMemMapFs()
+				},
+			},
+			output: output{
+				expectedErr:      nil,
+				untrackedContent: "",
+			},
+		},
+		{
+			name: "not found file",
+			input: input{
+				files: []string{
+					testFile1,
+				},
+				mockFs: func() afero.Fs {
+					fs := afero.NewMemMapFs()
+					return fs
+				},
+			},
+			output: output{
+				expectedErr:      os.ErrNotExist,
+				untrackedContent: "",
+			},
+		},
+		{
+			name: "one file",
+			input: input{
+				files: []string{
+					testFile1,
+				},
+				mockFs: func() afero.Fs {
+					fs := afero.NewMemMapFs()
+					err := afero.WriteFile(fs, testFile1, []byte("test"), 0644)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return fs
+				},
+			},
+			output: output{
+				expectedErr:      nil,
+				untrackedContent: fmt.Sprintf("%s:test\n", testFile1),
+			},
+		},
+		{
+			name: "more than one file",
+			input: input{
+				files: []string{
+					testFile1,
+					testFile2,
+				},
+				mockFs: func() afero.Fs {
+					fs := afero.NewMemMapFs()
+					err := afero.WriteFile(fs, testFile1, []byte("test"), 0644)
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = afero.WriteFile(fs, testFile2, []byte("test2"), 0644)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return fs
+				},
+			},
+			output: output{
+				expectedErr:      nil,
+				untrackedContent: fmt.Sprintf("%s:test\n%s:test2\n", testFile1, testFile2),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := tt.input.mockFs()
+			gitRepoController := gitRepoController{
+				fs: fs,
+			}
+			content, err := gitRepoController.getUntrackedContent(tt.input.files)
+			assert.Equal(t, tt.output.untrackedContent, content)
+			assert.ErrorIs(t, err, tt.output.expectedErr)
 		})
 	}
 }

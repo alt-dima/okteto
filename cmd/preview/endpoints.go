@@ -53,11 +53,11 @@ func Endpoints(ctx context.Context) *cobra.Command {
 				oktetoLog.SetOutput(jsonContextBuffer)
 			}
 
-			if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.ContextOptions{}); err != nil {
+			if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.Options{}); err != nil {
 				return err
 			}
 			if output != "json" {
-				oktetoLog.Information("Using %s @ %s as context", previewName, okteto.RemoveSchema(okteto.Context().Name))
+				oktetoLog.Information("Using %s @ %s as context", previewName, okteto.RemoveSchema(okteto.GetContext().Name))
 			} else {
 				oktetoLog.Info(jsonContextBuffer.String())
 				oktetoLog.SetOutput(os.Stdout)
@@ -95,7 +95,7 @@ func executeListPreviewEndpoints(ctx context.Context, name, output string) error
 	}
 	endpointList, err := oktetoClient.Previews().ListEndpoints(ctx, name)
 	if err != nil {
-		return fmt.Errorf("failed to get preview environments: %s", err)
+		return fmt.Errorf("failed to get preview environments: %w", err)
 	}
 
 	switch output {

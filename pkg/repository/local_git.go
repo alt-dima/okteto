@@ -1,3 +1,16 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package repository
 
 import (
@@ -10,15 +23,15 @@ import (
 	"syscall"
 	"time"
 
-	oktetoLog "github.com/okteto/okteto/pkg/log"
-
 	"github.com/go-git/go-git/v5"
+	oktetoLog "github.com/okteto/okteto/pkg/log"
 )
 
 var (
 	errLocalGitCannotGetStatusTooManyAttempts = errors.New("failed to get status: too many attempts")
 	errLocalGitCannotGetStatusCannotRecover   = errors.New("failed to get status: cannot recover")
 	errLocalGitInvalidStatusOutput            = errors.New("failed to get git status: unexpected status line")
+	errLocalGitCannotGetCommitTooManyAttempts = errors.New("failed to get latest dir commit: too many attempts")
 )
 
 type CommandExecutor interface {
@@ -64,15 +77,17 @@ func (*LocalExec) LookPath(file string) (string, error) {
 }
 
 type LocalGitInterface interface {
-	Status(ctx context.Context, dirPath string, fixAttempt int) (git.Status, error)
+	Status(ctx context.Context, repoRoot, dirPath string, fixAttempt int) (git.Status, error)
 	Exists() (string, error)
 	FixDubiousOwnershipConfig(path string) error
 	parseGitStatus(string) (git.Status, error)
+	GetLatestCommit(ctx context.Context, repoRoot, dirPath string, fixAttempt int) (string, error)
+	Diff(ctx context.Context, repoRoot, dirPath string, fixAttempt int) (string, error)
 }
 
 type LocalGit struct {
-	gitPath string
 	exec    CommandExecutor
+	gitPath string
 }
 
 func NewLocalGit(gitPath string, exec CommandExecutor) *LocalGit {
@@ -83,24 +98,28 @@ func NewLocalGit(gitPath string, exec CommandExecutor) *LocalGit {
 }
 
 // Status returns the status of the repository at the given path
-func (lg *LocalGit) Status(ctx context.Context, dirPath string, fixAttempt int) (git.Status, error) {
+func (lg *LocalGit) Status(ctx context.Context, repoRoot, dirPath string, fixAttempt int) (git.Status, error) {
 	if fixAttempt > 1 {
 		return git.Status{}, errLocalGitCannotGetStatusTooManyAttempts
 	}
 
-	output, err := lg.exec.RunCommand(ctx, dirPath, lg.gitPath, "--no-optional-locks", "status", "--porcelain", "-z")
+	args := []string{"--no-optional-locks", "status", "--porcelain"}
+	if dirPath != "" {
+		args = append(args, dirPath)
+	}
+	output, err := lg.exec.RunCommand(ctx, repoRoot, lg.gitPath, args...)
 	if err != nil {
 		var exitError *exec.ExitError
 		errors.As(err, &exitError)
 		if exitError != nil {
 			exitErr := string(exitError.Stderr)
 			if strings.Contains(exitErr, "detected dubious ownership in repository") {
-				err = lg.FixDubiousOwnershipConfig(dirPath)
+				err = lg.FixDubiousOwnershipConfig(repoRoot)
 				if err != nil {
 					return git.Status{}, errLocalGitCannotGetStatusCannotRecover
 				}
 				fixAttempt++
-				return lg.Status(ctx, dirPath, fixAttempt)
+				return lg.Status(ctx, repoRoot, dirPath, fixAttempt)
 			}
 		}
 		return git.Status{}, errLocalGitCannotGetStatusCannotRecover
@@ -128,16 +147,17 @@ func (lg *LocalGit) Exists() (string, error) {
 }
 
 func (*LocalGit) parseGitStatus(gitStatusOutput string) (git.Status, error) {
-	lines := strings.Split(gitStatusOutput, "\000")
+	lines := strings.Split(gitStatusOutput, "\n")
 	status := make(map[string]*git.FileStatus, len(lines))
 
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
+		maxValidGitStatusParts := 2
 		// line example values can be: "M modified-file.go", "?? new-file.go", etc
-		parts := strings.SplitN(strings.TrimLeft(line, " "), " ", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(strings.TrimLeft(line, " "), " ", maxValidGitStatusParts)
+		if len(parts) == maxValidGitStatusParts {
 			status[strings.Trim(parts[1], " ")] = &git.FileStatus{
 				Staging: git.StatusCode([]byte(parts[0])[0]),
 			}
@@ -147,4 +167,56 @@ func (*LocalGit) parseGitStatus(gitStatusOutput string) (git.Status, error) {
 	}
 
 	return status, nil
+}
+
+// GetLatestCommit returns the latest commit of the repository at the given path
+func (lg *LocalGit) GetLatestCommit(ctx context.Context, gitPath, dirPath string, fixAttempt int) (string, error) {
+	if fixAttempt > 1 {
+		return "", errLocalGitCannotGetCommitTooManyAttempts
+	}
+
+	output, err := lg.exec.RunCommand(ctx, gitPath, lg.gitPath, "--no-optional-locks", "log", "-n", "1", "--pretty=format:%H", "--", dirPath)
+	if err != nil {
+		var exitError *exec.ExitError
+		errors.As(err, &exitError)
+		if exitError != nil {
+			exitErr := string(exitError.Stderr)
+			if strings.Contains(exitErr, "detected dubious ownership in repository") {
+				err = lg.FixDubiousOwnershipConfig(gitPath)
+				if err != nil {
+					return "", errLocalGitCannotGetStatusCannotRecover
+				}
+				fixAttempt++
+				return lg.GetLatestCommit(ctx, gitPath, dirPath, fixAttempt)
+			}
+		}
+		return "", errLocalGitCannotGetStatusCannotRecover
+	}
+	return string(output), nil
+}
+
+// Diff returns the diff of the repository at the given path
+func (lg *LocalGit) Diff(ctx context.Context, gitPath, dirPath string, fixAttempt int) (string, error) {
+	if fixAttempt > 1 {
+		return "", errLocalGitCannotGetCommitTooManyAttempts
+	}
+
+	output, err := lg.exec.RunCommand(ctx, gitPath, lg.gitPath, "--no-optional-locks", "diff", "--no-color", "--", "HEAD", dirPath)
+	if err != nil {
+		var exitError *exec.ExitError
+		errors.As(err, &exitError)
+		if exitError != nil {
+			exitErr := string(exitError.Stderr)
+			if strings.Contains(exitErr, "detected dubious ownership in repository") {
+				err = lg.FixDubiousOwnershipConfig(gitPath)
+				if err != nil {
+					return "", errLocalGitCannotGetStatusCannotRecover
+				}
+				fixAttempt++
+				return lg.GetLatestCommit(ctx, gitPath, dirPath, fixAttempt)
+			}
+		}
+		return "", errLocalGitCannotGetStatusCannotRecover
+	}
+	return string(output), nil
 }

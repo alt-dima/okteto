@@ -29,6 +29,38 @@ linters-settings:
     # Otherwise, only methods that take `*testing.T`, `*testing.B`, and `testing.TB` as arguments are checked.
     # Default: false
     all: true
+  govet:
+    enable:
+      - fieldalignment
+  goheader:
+    values:
+      regexp:
+        YEAR: 2023|2024
+    template-path: .copyright-header.tmpl
+  gomnd:
+    checks:
+      - argument
+      - case
+      - condition
+      # - operation
+      # - return
+      # - assign
+    ignored-functions:
+      - '\.NewWriter'
+      - '\.NewTabWriter'
+      - '\.WriteFile'
+      - '^time.'
+      - '^os.'
+      - '^bcrypt.'
+      - '^math.'
+      - '^big.'
+      - '\.SetIndent'
+      - int
+      - make
+      - '\.WithTimeout'
+  revive:
+    rules:
+      - name: exported
 
 # All possible linters can be found https://golangci-lint.run/usage/linters/
 linters:
@@ -42,8 +74,27 @@ linters:
     - unparam
     - tenv
     - tparallel
+    - gci
+    - goheader
+    - unconvert
+    - predeclared
+    - asciicheck
+    - asasalint
+    - bidichk
+    - decorder
+    - exportloopref
+    - makezero
+    - gomnd
+    - musttag
+    - bodyclose
+    - durationcheck
+    - exhaustive
+    - revive
 
 issues:
+  include:
+    - EXC0014 # EXC0014 revive: comment on exported (.+) should be of the form "(.+)..."
+
   # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
   max-issues-per-linter: 0
 

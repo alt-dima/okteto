@@ -34,8 +34,8 @@ type ImageMetadata struct {
 }
 
 type Port struct {
-	ContainerPort int32
 	Protocol      apiv1.Protocol
+	ContainerPort int32
 }
 
 func (Port) GetHostPort() int32            { return 0 }
@@ -55,6 +55,13 @@ type imageConfig interface {
 }
 
 func NewImageCtrl(config imageConfig) ImageCtrl {
+	return ImageCtrl{
+		config:           config,
+		registryReplacer: NewRegistryReplacer(config),
+	}
+}
+
+func NewImageCtrlFromContext(config imageConfig) ImageCtrl {
 	return ImageCtrl{
 		config:           config,
 		registryReplacer: NewRegistryReplacer(config),
@@ -91,7 +98,7 @@ func (ImageCtrl) GetRegistryAndRepo(tag string) (string, string) {
 
 	if len(splittedImage) == 1 {
 		imageTag = splittedImage[0]
-	} else if len(splittedImage) == 2 {
+	} else if len(splittedImage) == 2 { //nolint:gomnd
 		if strings.Contains(splittedImage[0], ".") {
 			return splittedImage[0], splittedImage[1]
 		}

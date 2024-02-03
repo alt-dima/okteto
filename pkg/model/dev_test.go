@@ -16,12 +16,13 @@ package model
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/compose-spec/godotenv"
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/env"
 	"github.com/okteto/okteto/pkg/model/forward"
 	"github.com/stretchr/testify/assert"
 	apiv1 "k8s.io/api/core/v1"
@@ -160,7 +161,7 @@ func Test_LoadManifestDefaults(t *testing.T) {
 	tests := []struct {
 		name                string
 		manifest            []byte
-		expectedEnvironment Environment
+		expectedEnvironment env.Environment
 		expectedForward     []forward.Forward
 	}{
 		{
@@ -168,7 +169,7 @@ func Test_LoadManifestDefaults(t *testing.T) {
 			[]byte(`name: service
 container: core
 workdir: /app`),
-			Environment{},
+			env.Environment{},
 			[]forward.Forward{},
 		},
 		{
@@ -176,7 +177,7 @@ workdir: /app`),
 			[]byte(`name: service
 container: core
 workdir: /app`),
-			Environment{},
+			env.Environment{},
 			[]forward.Forward{},
 		},
 		{
@@ -187,7 +188,7 @@ workdir: /app
 environment:
   - ENV=production
   - name=test-node`),
-			Environment{
+			env.Environment{
 				{Name: "ENV", Value: "production"},
 				{Name: "name", Value: "test-node"},
 			},
@@ -201,7 +202,7 @@ workdir: /app
 forward:
   - 9000:8000
   - 9001:8001`),
-			Environment{},
+			env.Environment{},
 			[]forward.Forward{
 				{Local: 9000, Remote: 8000, Service: false, ServiceName: ""},
 				{Local: 9001, Remote: 8001, Service: false, ServiceName: ""},
@@ -269,8 +270,8 @@ func Test_loadName(t *testing.T) {
 		name      string
 		devName   string
 		value     string
-		onService bool
 		want      string
+		onService bool
 	}{
 		{
 			name:    "no-var",
@@ -350,10 +351,10 @@ services:
 
 func Test_loadSelector(t *testing.T) {
 	tests := []struct {
-		name     string
 		selector Selector
-		value    string
 		want     Selector
+		name     string
+		value    string
 	}{
 		{
 			name:     "no-var",
@@ -509,8 +510,8 @@ func TestDev_validateName(t *testing.T) {
 			dev := &Dev{
 				Name:            tt.devName,
 				ImagePullPolicy: apiv1.PullAlways,
-				Image:           &BuildInfo{},
-				Push:            &BuildInfo{},
+				Image:           &build.Info{},
+				Push:            &build.Info{},
 				Sync: Sync{
 					Folders: []SyncFolder{
 						{
@@ -537,8 +538,8 @@ func TestDev_validateReplicas(t *testing.T) {
 	dev := &Dev{
 		Name:            "test",
 		ImagePullPolicy: apiv1.PullAlways,
-		Image:           &BuildInfo{},
-		Push:            &BuildInfo{},
+		Image:           &build.Info{},
+		Push:            &build.Info{},
 		Replicas:        &replicasNumber,
 		Sync: Sync{
 			Folders: []SyncFolder{
@@ -562,9 +563,9 @@ func TestDev_validateReplicas(t *testing.T) {
 
 func TestDev_readImageContext(t *testing.T) {
 	tests := []struct {
+		expected *build.Info
 		name     string
 		manifest []byte
-		expected *BuildInfo
 	}{
 		{
 			name: "context pointing to url",
@@ -572,7 +573,7 @@ func TestDev_readImageContext(t *testing.T) {
 image:
   context: https://github.com/okteto/okteto.git
 `),
-			expected: &BuildInfo{
+			expected: &build.Info{
 				Context: "https://github.com/okteto/okteto.git",
 			},
 		},
@@ -582,7 +583,7 @@ image:
 image:
   context: .
 `),
-			expected: &BuildInfo{
+			expected: &build.Info{
 				Context:    ".",
 				Dockerfile: "Dockerfile",
 			},
@@ -1057,68 +1058,6 @@ func TestPersistentVolumeEnabled(t *testing.T) {
 	}
 }
 
-func Test_ExpandEnv(t *testing.T) {
-	t.Setenv("BAR", "bar")
-	tests := []struct {
-		name          string
-		value         string
-		expandIfEmpty bool
-		result        string
-		expectedErr   error
-	}{
-		{
-			name:          "broken var - missing closing curly bracket",
-			value:         "value-${BAR",
-			expandIfEmpty: true,
-			result:        "",
-			expectedErr:   fmt.Errorf("error expanding environment on 'value-${BAR': closing brace expected"),
-		},
-		{
-			name:          "no-var",
-			value:         "value",
-			expandIfEmpty: true,
-			result:        "value",
-			expectedErr:   nil,
-		},
-		{
-			name:          "var",
-			value:         "value-${BAR}-value",
-			expandIfEmpty: true,
-			result:        "value-bar-value",
-			expectedErr:   nil,
-		},
-		{
-			name:          "default",
-			value:         "value-${FOO:-foo}-value",
-			expandIfEmpty: true,
-			result:        "value-foo-value",
-			expectedErr:   nil,
-		},
-		{
-			name:          "only bar expanded",
-			value:         "${BAR}",
-			expandIfEmpty: true,
-			result:        "bar",
-			expectedErr:   nil,
-		},
-		{
-			name:          "only bar not expand if empty",
-			value:         "${FOO}",
-			expandIfEmpty: false,
-			result:        "${FOO}",
-			expectedErr:   nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := ExpandEnv(tt.value, tt.expandIfEmpty)
-			assert.Equal(t, err, tt.expectedErr)
-			assert.Equal(t, tt.result, result)
-		})
-	}
-}
-
 func TestGetTimeout(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1154,11 +1093,11 @@ func TestGetTimeout(t *testing.T) {
 
 func Test_loadEnvFile(t *testing.T) {
 	tests := []struct {
-		name      string
-		expectErr bool
 		content   map[string]string
 		existing  map[string]string
 		expected  map[string]string
+		name      string
+		expectErr bool
 	}{
 		{
 			name:      "missing",
@@ -1453,16 +1392,11 @@ services:
         cpu: "500m"
     workdir: /app
     %s`, tt.value))
-			expected := fmt.Sprintf("Error on dev 'deployment': %q is not supported in Services. Please visit https://www.okteto.com/docs/reference/manifest/#services-object-optional for documentation", tt.name)
+			expected := fmt.Sprintf("error on dev 'deployment': %q is not supported in Services. Please visit https://www.okteto.com/docs/reference/manifest/#services-object-optional for documentation", tt.name)
 
 			_, err := Read(manifest)
-			if err == nil {
-				t.Fatal("Expected to receive error from validateForExtraFields but got none")
-			}
-
-			if err.Error() != expected {
-				t.Errorf("Received error from validateForExtraFields is invalid: got %s, expected %s", err.Error(), expected)
-			}
+			assert.NotNil(t, err)
+			assert.ErrorContains(t, err, expected)
 		})
 	}
 }
@@ -1487,22 +1421,21 @@ func createEnvFile(content map[string]string) (string, error) {
 }
 
 func Test_expandEnvFiles(t *testing.T) {
-
 	tests := []struct {
 		name     string
 		dev      *Dev
 		envs     []byte
-		expected Environment
+		expected env.Environment
 	}{
 		{
 			name: "add new envs",
 			dev: &Dev{
-				Environment: Environment{},
-				EnvFiles:    EnvFiles{},
+				Environment: env.Environment{},
+				EnvFiles:    env.Files{},
 			},
 			envs: []byte("key1=value1"),
-			expected: Environment{
-				EnvVar{
+			expected: env.Environment{
+				env.Var{
 					Name:  "key1",
 					Value: "value1",
 				},
@@ -1511,17 +1444,17 @@ func Test_expandEnvFiles(t *testing.T) {
 		{
 			name: "dont overwrite envs",
 			dev: &Dev{
-				Environment: Environment{
+				Environment: env.Environment{
 					{
 						Name:  "key1",
 						Value: "value1",
 					},
 				},
-				EnvFiles: EnvFiles{},
+				EnvFiles: env.Files{},
 			},
 			envs: []byte("key1=value100"),
-			expected: Environment{
-				EnvVar{
+			expected: env.Environment{
+				env.Var{
 					Name:  "key1",
 					Value: "value1",
 				},
@@ -1530,12 +1463,12 @@ func Test_expandEnvFiles(t *testing.T) {
 		{
 			name: "empty env - infer value",
 			dev: &Dev{
-				Environment: Environment{},
-				EnvFiles:    EnvFiles{},
+				Environment: env.Environment{},
+				EnvFiles:    env.Files{},
 			},
 			envs: []byte("OKTETO_TEST="),
-			expected: Environment{
-				EnvVar{
+			expected: env.Environment{
+				env.Var{
 					Name:  "OKTETO_TEST",
 					Value: "myvalue",
 				},
@@ -1544,11 +1477,11 @@ func Test_expandEnvFiles(t *testing.T) {
 		{
 			name: "empty env - empty value",
 			dev: &Dev{
-				Environment: Environment{},
-				EnvFiles:    EnvFiles{},
+				Environment: env.Environment{},
+				EnvFiles:    env.Files{},
 			},
 			envs:     []byte("OKTETO_TEST2="),
-			expected: Environment{},
+			expected: env.Environment{},
 		},
 	}
 	for _, tt := range tests {
@@ -1560,7 +1493,7 @@ func Test_expandEnvFiles(t *testing.T) {
 			}
 			defer os.RemoveAll(file.Name())
 
-			tt.dev.EnvFiles = EnvFiles{file.Name()}
+			tt.dev.EnvFiles = env.Files{file.Name()}
 
 			t.Setenv("OKTETO_TEST", "myvalue")
 
@@ -1575,248 +1508,44 @@ func Test_expandEnvFiles(t *testing.T) {
 	}
 }
 
-func TestBuildInfo_GetDockerfilePath(t *testing.T) {
-	dir := t.TempDir()
-
-	dockerfilePath := filepath.Join(dir, "Dockerfile")
-	dockerfiledevPath := filepath.Join(dir, "Dockerfile.dev")
-	assert.NoError(t, os.WriteFile(dockerfilePath, []byte(`FROM alpine`), 0600))
-	assert.NoError(t, os.WriteFile(dockerfiledevPath, []byte(`FROM alpine`), 0600))
+func TestPrepare(t *testing.T) {
+	type input struct {
+		manifestPath string
+	}
 	tests := []struct {
-		name       string
-		context    string
-		dockerfile string
-		want       string
+		name          string
+		dev           *Dev
+		input         input
+		expectedError bool
 	}{
 		{
-			name:       "with-context",
-			context:    dir,
-			dockerfile: "Dockerfile",
-			want:       filepath.Join(dir, "Dockerfile"),
+			name: "success",
+			dev:  &Dev{},
+			input: input{
+				manifestPath: "okteto.yml",
+			},
+			expectedError: false,
 		},
 		{
-			name:       "with-context-and-non-dockerfile",
-			context:    dir,
-			dockerfile: "Dockerfile.dev",
-			want:       filepath.Join(dir, "Dockerfile.dev"),
-		},
-		{
-			name:       "empty",
-			context:    "",
-			dockerfile: "",
-			want:       "",
-		},
-		{
-			name:       "default",
-			context:    "",
-			dockerfile: "Dockerfile",
-			want:       "Dockerfile",
-		},
-
-		{
-			name:       "with-context-and-dockerfile-expanded",
-			context:    "api",
-			dockerfile: "api/Dockerfile.dev",
-			want:       "api/Dockerfile.dev",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &BuildInfo{
-				Context:    tt.context,
-				Dockerfile: tt.dockerfile,
-			}
-			if got := b.GetDockerfilePath(); got != tt.want {
-				t.Errorf("BuildInfo.GetDockerfilePath() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_BuildInfoCopy(t *testing.T) {
-	b := &BuildInfo{
-		Name:        "test",
-		Context:     "context",
-		Dockerfile:  "dockerfile",
-		Target:      "target",
-		Image:       "image",
-		CacheFrom:   []string{"cache"},
-		ExportCache: []string{"export"},
-		Args: BuildArgs{
-			BuildArg{
-				Name:  "env",
-				Value: "test",
+			name: "with missing envFiles",
+			dev: &Dev{
+				EnvFiles: env.Files{".notfound"},
 			},
-		},
-		Secrets: BuildSecrets{
-			"sec": "test",
-		},
-		VolumesToInclude: []StackVolume{
-			{
-				LocalPath:  "local",
-				RemotePath: "remote",
+			input: input{
+				manifestPath: "okteto.yml",
 			},
-		},
-		DependsOn: BuildDependsOn{"other"},
-	}
-
-	copyB := b.Copy()
-	assert.EqualValues(t, b, copyB)
-
-	samePointer := &copyB == &b
-	assert.False(t, samePointer)
-}
-
-func TestExpandBuildArgs(t *testing.T) {
-	t.Setenv("KEY", "VALUE")
-	tests := []struct {
-		name               string
-		buildInfo          *BuildInfo
-		previousImageBuilt map[string]string
-		expected           *BuildInfo
-	}{
-		{
-			name:               "no build args",
-			buildInfo:          &BuildInfo{},
-			previousImageBuilt: map[string]string{},
-			expected:           &BuildInfo{},
-		},
-		{
-			name: "only buildInfo without expanding",
-			buildInfo: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-				},
-			},
-			previousImageBuilt: map[string]string{},
-			expected: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-				},
-			},
-		},
-		{
-			name: "only buildInfo expanding",
-			buildInfo: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "$KEY",
-					},
-				},
-			},
-			previousImageBuilt: map[string]string{},
-			expected: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-				},
-			},
-		},
-		{
-			name:      "only previousImageBuilt",
-			buildInfo: &BuildInfo{},
-			previousImageBuilt: map[string]string{
-				"KEY": "VALUE",
-			},
-			expected: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-				},
-			},
-		},
-		{
-			name: "buildInfo args and previousImageBuilt without expanding",
-			buildInfo: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-				},
-			},
-			previousImageBuilt: map[string]string{
-				"KEY2": "VALUE2",
-			},
-			expected: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-					{
-						Name:  "KEY2",
-						Value: "VALUE2",
-					},
-				},
-			},
-		},
-		{
-			name: "buildInfo args and previousImageBuilt expanding",
-			buildInfo: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "$KEY",
-					},
-				},
-			},
-			previousImageBuilt: map[string]string{
-				"KEY2": "VALUE2",
-			},
-			expected: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-					{
-						Name:  "KEY2",
-						Value: "VALUE2",
-					},
-				},
-			},
-		},
-		{
-			name: "buildInfo args only same as previousImageBuilt",
-			buildInfo: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "$KEY",
-					},
-				},
-			},
-			previousImageBuilt: map[string]string{
-				"KEY": "VALUE",
-			},
-			expected: &BuildInfo{
-				Args: BuildArgs{
-					{
-						Name:  "KEY",
-						Value: "VALUE",
-					},
-				},
-			},
+			expectedError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.NoError(t, tt.buildInfo.AddBuildArgs(tt.previousImageBuilt))
-
-			assert.Equal(t, tt.expected, tt.buildInfo)
+			err := tt.dev.PreparePathsAndExpandEnvFiles(tt.input.manifestPath)
+			if tt.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

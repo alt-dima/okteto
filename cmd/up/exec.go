@@ -25,8 +25,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/okteto/okteto/pkg/k8s/secrets"
-
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/cmd/pipeline"
 	"github.com/okteto/okteto/pkg/config"
@@ -36,6 +34,7 @@ import (
 	"github.com/okteto/okteto/pkg/k8s/configmaps"
 	k8sExec "github.com/okteto/okteto/pkg/k8s/exec"
 	"github.com/okteto/okteto/pkg/k8s/pods"
+	"github.com/okteto/okteto/pkg/k8s/secrets"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
@@ -52,10 +51,11 @@ type hybridExecutor struct {
 }
 
 type HybridExecCtx struct {
-	Workdir         string
-	Dev             *model.Dev
-	Name, Namespace string
-	Client          kubernetes.Interface
+	Client    kubernetes.Interface
+	Dev       *model.Dev
+	Workdir   string
+	Name      string
+	Namespace string
 }
 
 // GetCommandToExec returns the command to exec into the hybrid mode
@@ -173,14 +173,15 @@ type imageEnvsGetter struct {
 }
 
 type envsGetter struct {
-	dev                   *model.Dev
-	name, namespace       string
 	client                kubernetes.Interface
 	devContainerEnvGetter devContainerEnvGetterInterface
 	configMapEnvsGetter   configMapEnvsGetterInterface
 	secretsEnvsGetter     secretsEnvsGetterInterface
 	imageEnvsGetter       imageEnvsGetterInterface
+	dev                   *model.Dev
 	getDefaultLocalEnvs   func() []string
+	name                  string
+	namespace             string
 }
 
 func newEnvsGetter(hybridCtx *HybridExecCtx) (*envsGetter, error) {
@@ -219,9 +220,15 @@ func (eg *envsGetter) getEnvs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 
-	imageEnvs, err := eg.imageEnvsGetter.getEnvsFromImage(apps.GetDevContainer(app.PodSpec(), "").Image)
+	svcImage := apps.GetDevContainer(app.PodSpec(), "").Image
+	imageEnvs, err := eg.imageEnvsGetter.getEnvsFromImage(svcImage)
 	if err != nil {
-		return nil, err
+		// we must not fail since the image may not be found because the platform
+		// of the image executed in the pod might not match the local platform used
+		// for the search.
+		reason := fmt.Sprintf("Could not to retrieve environment variables from the image '%s'", svcImage)
+		oktetoLog.Debugf("%s: %s", reason, err.Error())
+		oktetoLog.Warning(reason)
 	}
 	envs = append(envs, imageEnvs...)
 
@@ -296,7 +303,7 @@ func (d *devContainerEnvGetter) getEnvsFromDevContainer(ctx context.Context, spe
 	return envs, nil
 }
 
-func (cmg *configMapGetter) getEnvsFromConfigMap(ctx context.Context, name string, namespace string, client kubernetes.Interface) ([]string, error) {
+func (cmg *configMapGetter) getEnvsFromConfigMap(ctx context.Context, name, namespace string, client kubernetes.Interface) ([]string, error) {
 	var envs []string
 
 	cmName := pipeline.TranslatePipelineName(name)
@@ -369,7 +376,7 @@ func (up *upContext) cleanCommand(ctx context.Context) {
 
 	cmd := "cat /var/okteto/bin/version.txt; cat /proc/sys/fs/inotify/max_user_watches; /var/okteto/bin/clean >/dev/null 2>&1"
 
-	k8sClient, restConfig, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, restConfig, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		oktetoLog.Infof("failed to clean session: %s", err)
 		return
@@ -402,7 +409,7 @@ func (up *upContext) RunCommand(ctx context.Context, cmd []string) error {
 		return err
 	}
 
-	k8sClient, restConfig, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, restConfig, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}
@@ -452,7 +459,7 @@ func (up *upContext) RunCommand(ctx context.Context, cmd []string) error {
 }
 
 func (up *upContext) checkOktetoStartError(ctx context.Context, msg string) error {
-	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}

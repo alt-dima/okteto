@@ -7,6 +7,12 @@ aliases:
   # standard semver regex as defined in: https://semver.org/
   - &release-regex /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
   - &release-branch-regex /^release-\d+\.\d+$/
+  - &okteto-login |
+    curl https://get.okteto.com -sSfL | sh
+    mkdir -p $HOME/.okteto
+    touch $HOME/.okteto/.noanalytics
+    okteto context use ${OKTETO_URL} --token ${OKTETO_TOKEN}
+  - &docker-login echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 version: 2.1
 
 parameters:
@@ -38,7 +44,10 @@ commands:
     steps:
       - run:
           name: Run build integration tests
-          command: make integration-build
+          command: |
+            export DEPOT_PROJECT_ID=$DEPOT_PROJECT_ID
+            export DEPOT_TOKEN=$DEPOT_TOKEN
+            make integration-build
 
   integration-deploy:
     steps:
@@ -66,10 +75,11 @@ commands:
           name: Run deprecated integration tests
           command: make integration-deprecated
 
+
 executors:
   golang-ci:
     docker:
-      - image: okteto/golang-ci:2.3.1
+      - image: okteto/golang-ci:2.3.3
 
 jobs:
   golangci-lint:
@@ -149,7 +159,7 @@ jobs:
     environment:
       OKTETO_URL: https://staging.okteto.dev/
       OKTETO_USER: cindylopez
-      OKTETO_APPS_SUBDOMAIN: staging.okteto.net
+      OKTETO_APPS_SUBDOMAIN: staging.okteto.dev
     steps:
       - checkout
       - restore_cache:
@@ -168,12 +178,12 @@ jobs:
             chmod +x /usr/local/bin/kubectl
             cp $(pwd)/artifacts/bin/okteto-Linux-x86_64 /usr/local/bin/okteto
             /usr/local/bin/okteto login --token ${API_STAGING_TOKEN}
+      - integration-build
       - integration-deploy
       - integration-up
       - integration-actions
       - integration-okteto
       - integration-deprecated
-      - integration-build
       - save_cache:
           key: v4-pkg-cache-{{ checksum "go.sum" }}
           paths:
@@ -196,12 +206,11 @@ jobs:
             sha=$(cat ./artifacts/bin/okteto-Darwin-x86_64.sha256 | awk '{print $1}')
             sha_arm=$(cat ./artifacts/bin/okteto-Darwin-arm64.sha256 | awk '{print $1}')
             ./scripts/update_homebrew_formula.sh 0.0.1 $sha $sha_arm
-      - setup_remote_docker
+      - run: *okteto-login
       - run:
           name: Build Docker container
           command: |
-            export DOCKER_BUILDKIT=1
-            docker build -t okteto --build-arg VERSION_STRING=$CIRCLE_SHA1 .
+            okteto build --platform "linux/arm64,linux/amd64" --build-arg VERSION_STRING=$CIRCLE_SHA1 -f Dockerfile .
 
   run-windows-e2e-test:
     executor: win/default
@@ -243,7 +252,7 @@ jobs:
           environment:
             OKTETO_URL: https://staging.okteto.dev/
             OKTETO_SKIP_CLEANUP: 'true'
-            OKTETO_APPS_SUBDOMAIN: staging.okteto.net
+            OKTETO_APPS_SUBDOMAIN: staging.okteto.dev
           command: |
             $env:OKTETO_PATH="$($HOME)\project\artifacts\bin\okteto.exe"
             $env:Path+=";$($HOME)\project\artifacts\bin"
@@ -254,8 +263,10 @@ jobs:
           environment:
             OKTETO_URL: https://staging.okteto.dev/
             OKTETO_SKIP_CLEANUP: 'true'
-            OKTETO_APPS_SUBDOMAIN: staging.okteto.net
+            OKTETO_APPS_SUBDOMAIN: staging.okteto.dev
           command: |
+            $env:DEPOT_PROJECT_ID=$DEPOT_PROJECT_ID
+            $env:DEPOT_TOKEN=$DEPOT_TOKEN
             $env:OKTETO_PATH="$($HOME)\project\artifacts\bin\okteto.exe"
             go test github.com/okteto/okteto/integration/build -tags="integration" --count=1 -v -timeout 10m
       - run:
@@ -263,17 +274,18 @@ jobs:
           environment:
             OKTETO_URL: https://staging.okteto.dev/
             OKTETO_SKIP_CLEANUP: 'true'
-            OKTETO_APPS_SUBDOMAIN: staging.okteto.net
+            OKTETO_APPS_SUBDOMAIN: staging.okteto.dev
           command: |
             $env:OKTETO_PATH="$($HOME)\project\artifacts\bin\okteto.exe"
             $env:Path+=";$($HOME)\project\artifacts\bin"
+            $env:SSH_AUTH_SOCK = (Get-Command ssh-agent).Definition -replace 'ssh-agent.exe','ssh-agent.sock'
             go test github.com/okteto/okteto/integration/deploy -tags="integration" --count=1 -v -timeout 20m
       - run:
           name: Run up integration tests
           environment:
             OKTETO_URL: https://staging.okteto.dev/
             OKTETO_SKIP_CLEANUP: 'true'
-            OKTETO_APPS_SUBDOMAIN: staging.okteto.net
+            OKTETO_APPS_SUBDOMAIN: staging.okteto.dev
           command: |
             $env:OKTETO_PATH="$($HOME)\project\artifacts\bin\okteto.exe"
             $env:Path+=";$($HOME)\project\artifacts\bin"
@@ -292,15 +304,17 @@ jobs:
     executor: golang-ci
     steps:
       - checkout
-      - setup_remote_docker
-      - run: ./scripts/ci/push-image.sh "$CIRCLE_TAG"
+      - run: *okteto-login
+      - run: *docker-login
+      - run: ./scripts/ci/push-image.sh "$CIRCLE_TAG" "linux/amd64,linux/arm64"
 
   push-image-latest:
     executor: golang-ci
     steps:
       - checkout
-      - setup_remote_docker
-      - run: ./scripts/ci/push-image.sh latest
+      - run: *okteto-login
+      - run: *docker-login
+      - run: ./scripts/ci/push-image.sh latest "linux/amd64"
 
   upload-static:
     executor: golang-ci
@@ -316,7 +330,6 @@ jobs:
       - attach_workspace:
           at: ./artifacts
       - run: *init-gcloud
-      - setup_remote_docker
       - add_ssh_keys:
           fingerprints:
             - f7:81:9f:b4:31:3a:4d:46:ce:cf:54:a2:70:46:5a:df
@@ -374,7 +387,6 @@ workflows:
               ignore: *release-branch-regex
             tags:
               ignore: /.*/
-
       - run-unit-test:
           requires:
             - "golangci-lint"
@@ -408,7 +420,9 @@ workflows:
                 - master
                 - /.*(e2e)/
       - test-release:
-          context: GKE
+          context:
+            - GKE
+            - Product-okteto-dev
           requires:
             - build-binaries
           filters:
@@ -419,6 +433,7 @@ workflows:
                 - master
                 - *release-branch-regex
       - push-image-latest:
+          context: Product-okteto-dev
           requires:
             - build-binaries
           filters:
@@ -471,6 +486,7 @@ workflows:
       - run-unit-test
       - run-windows-unit-test
       - push-image-tag:
+          context: Product-okteto-dev
           requires:
             - build-binaries
       - release:
@@ -504,6 +520,7 @@ workflows:
             tags:
               ignore: *release-regex
       - push-image-tag:
+          context: Product-okteto-dev
           requires:
             - build-binaries
           filters:

@@ -27,17 +27,17 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/okteto/okteto/pkg/config"
-
 	"github.com/mitchellh/go-homedir"
-
 	builder "github.com/okteto/okteto/cmd/build"
 	remoteBuild "github.com/okteto/okteto/cmd/build/remote"
-	"github.com/okteto/okteto/pkg/cmd/build"
+	"github.com/okteto/okteto/pkg/build"
+	buildCmd "github.com/okteto/okteto/pkg/cmd/build"
+	"github.com/okteto/okteto/pkg/config"
 	"github.com/okteto/okteto/pkg/constants"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/filesystem"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/remote"
@@ -75,6 +75,7 @@ ENV {{$key}} {{$val}}
 {{end}}
 
 ARG {{ .GitCommitArgName }}
+ARG {{ .GitBranchArgName }}
 ARG {{ .InvalidateCacheArgName }}
 
 RUN okteto registrytoken install --force --log-output=json
@@ -97,6 +98,7 @@ type dockerfileTemplateProperties struct {
 	InternalServerName     string
 	ActionNameArgName      string
 	GitCommitArgName       string
+	GitBranchArgName       string
 	InvalidateCacheArgName string
 	DeployFlags            string
 }
@@ -117,11 +119,11 @@ type remoteDeployCommand struct {
 }
 
 // newRemoteDeployer creates the remote deployer from a
-func newRemoteDeployer(builder builderInterface) *remoteDeployCommand {
+func newRemoteDeployer(builder builderInterface, ioCtrl *io.Controller) *remoteDeployCommand {
 	fs := afero.NewOsFs()
 	return &remoteDeployCommand{
 		getBuildEnvVars:      builder.GetBuildEnvVars,
-		builderV1:            remoteBuild.NewBuilderFromScratch(),
+		builderV1:            remoteBuild.NewBuilderFromScratch(ioCtrl),
 		fs:                   fs,
 		workingDirectoryCtrl: filesystem.NewOsWorkingDirectoryCtrl(),
 		temporalCtrl:         filesystem.NewTemporalDirectoryCtrl(fs),
@@ -164,8 +166,9 @@ func (rd *remoteDeployCommand) deploy(ctx context.Context, deployOptions *Option
 		}
 	}()
 
-	buildInfo := &model.BuildInfo{
+	buildInfo := &build.Info{
 		Dockerfile: dockerfile,
+		Context:    rd.getContextPath(cwd, deployOptions.ManifestPathFlag),
 	}
 
 	// undo modification of CWD for Build command
@@ -178,31 +181,29 @@ func (rd *remoteDeployCommand) deploy(ctx context.Context, deployOptions *Option
 		return err
 	}
 
-	buildOptions := build.OptsFromBuildInfoForRemoteDeploy(buildInfo, &types.BuildOptions{OutputMode: "deploy"})
+	buildOptions := buildCmd.OptsFromBuildInfoForRemoteDeploy(buildInfo, &types.BuildOptions{OutputMode: "deploy"})
 	buildOptions.Manifest = deployOptions.Manifest
 	buildOptions.BuildArgs = append(
 		buildOptions.BuildArgs,
-		fmt.Sprintf("%s=%s", model.OktetoContextEnvVar, okteto.Context().Name),
-		fmt.Sprintf("%s=%s", model.OktetoNamespaceEnvVar, okteto.Context().Namespace),
-		fmt.Sprintf("%s=%s", model.OktetoTokenEnvVar, okteto.Context().Token),
+		fmt.Sprintf("%s=%s", model.OktetoContextEnvVar, okteto.GetContext().Name),
+		fmt.Sprintf("%s=%s", model.OktetoNamespaceEnvVar, okteto.GetContext().Namespace),
+		fmt.Sprintf("%s=%s", model.OktetoTokenEnvVar, okteto.GetContext().Token),
 		fmt.Sprintf("%s=%s", constants.OktetoTlsCertBase64EnvVar, base64.StdEncoding.EncodeToString(sc.Certificate)),
 		fmt.Sprintf("%s=%s", constants.OktetoInternalServerNameEnvVar, sc.ServerName),
 		fmt.Sprintf("%s=%s", model.OktetoActionNameEnvVar, os.Getenv(model.OktetoActionNameEnvVar)),
 		fmt.Sprintf("%s=%s", constants.OktetoGitCommitEnvVar, os.Getenv(constants.OktetoGitCommitEnvVar)),
+		fmt.Sprintf("%s=%s", constants.OktetoGitBranchEnvVar, os.Getenv(constants.OktetoGitBranchEnvVar)),
 		fmt.Sprintf("%s=%d", constants.OktetoInvalidateCacheEnvVar, int(randomNumber.Int64())),
 	)
 
 	if sc.ServerName != "" {
-		registryUrl := okteto.Context().Registry
+		registryUrl := okteto.GetContext().Registry
 		subdomain := strings.TrimPrefix(registryUrl, "registry.")
 		ip, _, err := net.SplitHostPort(sc.ServerName)
 		if err != nil {
 			return fmt.Errorf("failed to parse server name network address: %w", err)
 		}
-		buildOptions.ExtraHosts = []types.HostMap{
-			{Hostname: registryUrl, IP: ip},
-			{Hostname: fmt.Sprintf("kubernetes.%s", subdomain), IP: ip},
-		}
+		buildOptions.ExtraHosts = getExtraHosts(registryUrl, subdomain, ip, *sc)
 	}
 
 	sshSock := os.Getenv(rd.sshAuthSockEnvvar)
@@ -239,7 +240,7 @@ func (rd *remoteDeployCommand) deploy(ctx context.Context, deployOptions *Option
 	// account that we must not confuse the user with build messages since this logic is
 	// executed in the deploy command.
 	if err := rd.builderV1.Build(ctx, buildOptions); err != nil {
-		var cmdErr build.OktetoCommandErr
+		var cmdErr buildCmd.OktetoCommandErr
 		if errors.As(err, &cmdErr) {
 			oktetoLog.SetStage(cmdErr.Stage)
 			return oktetoErrors.UserError{
@@ -274,6 +275,11 @@ func (rd *remoteDeployCommand) createDockerfile(tmpDir string, opts *Options) (s
 			Funcs(template.FuncMap{"join": strings.Join}).
 			Parse(dockerfileTemplate))
 
+	deployFlags, err := getDeployFlags(opts)
+	if err != nil {
+		return "", err
+	}
+
 	dockerfileSyntax := dockerfileTemplateProperties{
 		OktetoCLIImage:         getOktetoCLIVersion(config.VersionString),
 		UserDeployImage:        opts.Manifest.Deploy.Image,
@@ -286,8 +292,9 @@ func (rd *remoteDeployCommand) createDockerfile(tmpDir string, opts *Options) (s
 		TokenArgName:           model.OktetoTokenEnvVar,
 		ActionNameArgName:      model.OktetoActionNameEnvVar,
 		GitCommitArgName:       constants.OktetoGitCommitEnvVar,
+		GitBranchArgName:       constants.OktetoGitBranchEnvVar,
 		InvalidateCacheArgName: constants.OktetoInvalidateCacheEnvVar,
-		DeployFlags:            strings.Join(getDeployFlags(opts), " "),
+		DeployFlags:            strings.Join(deployFlags, " "),
 	}
 
 	dockerfile, err := rd.fs.Create(filepath.Join(tmpDir, dockerfileTemporalName))
@@ -310,7 +317,7 @@ func (rd *remoteDeployCommand) createDockerfile(tmpDir string, opts *Options) (s
 	return dockerfile.Name(), nil
 }
 
-func getDeployFlags(opts *Options) []string {
+func getDeployFlags(opts *Options) ([]string, error) {
 	var deployFlags []string
 
 	if opts.Name != "" {
@@ -322,13 +329,25 @@ func getDeployFlags(opts *Options) []string {
 	}
 
 	if opts.ManifestPathFlag != "" {
-		deployFlags = append(deployFlags, fmt.Sprintf("--file %s", opts.ManifestPathFlag))
+		lastFolder := filepath.Base(filepath.Dir(opts.ManifestPathFlag))
+		if lastFolder == ".okteto" {
+			path := filepath.Clean(opts.ManifestPathFlag)
+			parts := strings.Split(path, string(filepath.Separator))
+
+			deployFlags = append(deployFlags, fmt.Sprintf("--file %s", filepath.Join(parts[len(parts)-2:]...)))
+		} else {
+			deployFlags = append(deployFlags, fmt.Sprintf("--file %s", filepath.Base(opts.ManifestPathFlag)))
+		}
 	}
 
 	if len(opts.Variables) > 0 {
 		var varsToAddForDeploy []string
-		for _, v := range opts.Variables {
-			varsToAddForDeploy = append(varsToAddForDeploy, fmt.Sprintf("--var %s", v))
+		variables, err := parse(opts.Variables)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range variables {
+			varsToAddForDeploy = append(varsToAddForDeploy, fmt.Sprintf("--var %s=\"%s\"", v.Name, v.Value))
 		}
 		deployFlags = append(deployFlags, strings.Join(varsToAddForDeploy, " "))
 	}
@@ -339,7 +358,7 @@ func getDeployFlags(opts *Options) []string {
 
 	deployFlags = append(deployFlags, fmt.Sprintf("--timeout %s", opts.Timeout))
 
-	return deployFlags
+	return deployFlags, nil
 }
 
 // getOriginalCWD returns the original cwd
@@ -373,18 +392,61 @@ func fetchRemoteServerConfig(ctx context.Context) (*types.ClusterMetadata, error
 	cp := okteto.NewOktetoClientProvider()
 	c, err := cp.Provide()
 	if err != nil {
-		return nil, fmt.Errorf("failed to provide okteto client for fetching certs: %s", err)
+		return nil, fmt.Errorf("failed to provide okteto client for fetching certs: %w", err)
 	}
 	uc := c.User()
 
-	metadata, err := uc.GetClusterMetadata(ctx, okteto.Context().Namespace)
+	metadata, err := uc.GetClusterMetadata(ctx, okteto.GetContext().Namespace)
 	if err != nil {
 		return nil, err
 	}
 
 	if metadata.Certificate == nil {
-		metadata.Certificate, err = uc.GetClusterCertificate(ctx, okteto.Context().Name, okteto.Context().Namespace)
+		metadata.Certificate, err = uc.GetClusterCertificate(ctx, okteto.GetContext().Name, okteto.GetContext().Namespace)
 	}
 
 	return &metadata, err
+}
+
+func getExtraHosts(registryURL, subdomain, ip string, metadata types.ClusterMetadata) []types.HostMap {
+	extraHosts := []types.HostMap{
+		{Hostname: registryURL, IP: ip},
+		{Hostname: fmt.Sprintf("kubernetes.%s", subdomain), IP: ip},
+	}
+
+	if metadata.BuildKitInternalIP != "" {
+		extraHosts = append(extraHosts, types.HostMap{Hostname: fmt.Sprintf("buildkit.%s", subdomain), IP: metadata.BuildKitInternalIP})
+	}
+
+	if metadata.PublicDomain != "" {
+		extraHosts = append(extraHosts, types.HostMap{Hostname: metadata.PublicDomain, IP: ip})
+	}
+
+	return extraHosts
+}
+
+func (rd *remoteDeployCommand) getContextPath(cwd, manifestPath string) string {
+	if manifestPath == "" {
+		return cwd
+	}
+
+	path := manifestPath
+	if !filepath.IsAbs(manifestPath) {
+		path = filepath.Join(cwd, manifestPath)
+	}
+	fInfo, err := rd.fs.Stat(path)
+	if err != nil {
+		oktetoLog.Infof("error getting file info: %s", err)
+		return cwd
+
+	}
+	if fInfo.IsDir() {
+		return path
+	}
+
+	possibleCtx := filepath.Dir(path)
+	if strings.HasSuffix(possibleCtx, ".okteto") {
+		return filepath.Dir(possibleCtx)
+	}
+	return possibleCtx
 }

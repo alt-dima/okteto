@@ -24,11 +24,9 @@ import (
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
-
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -52,13 +50,13 @@ func CreateForDev(ctx context.Context, dev *model.Dev, c kubernetes.Interface, d
 	pvcForDev := translate(dev)
 	k8Volume, err := vClient.Get(ctx, pvcForDev.Name, metav1.GetOptions{})
 	if err != nil && !strings.Contains(err.Error(), "not found") {
-		return fmt.Errorf("error getting kubernetes volume claim: %s", err)
+		return fmt.Errorf("error getting kubernetes volume claim: %w", err)
 	}
 	if k8Volume.Name == "" {
 		oktetoLog.Infof("creating volume claim '%s'", pvcForDev.Name)
 		_, err = vClient.Create(ctx, pvcForDev, metav1.CreateOptions{})
 		if err != nil {
-			return fmt.Errorf("error creating kubernetes volume claim: %s", err)
+			return fmt.Errorf("error creating kubernetes volume claim: %w", err)
 		}
 	} else {
 		if err := checkPVCValues(k8Volume, dev, devPath); err != nil {
@@ -162,17 +160,19 @@ func checkPVCValues(pvc *apiv1.PersistentVolumeClaim, dev *model.Dev, devPath st
 }
 
 // DestroyDev destroys the persistent volume claim for a given development container
-func DestroyDev(ctx context.Context, dev *model.Dev, c *kubernetes.Clientset) error {
+func DestroyDev(ctx context.Context, dev *model.Dev, c kubernetes.Interface) error {
 	return Destroy(ctx, dev.GetVolumeName(), dev.Namespace, c, dev.Timeout.Default)
 }
 
 // Destroy destroys a persistent volume claim
-func Destroy(ctx context.Context, name, namespace string, c *kubernetes.Clientset, timeout time.Duration) error {
+func Destroy(ctx context.Context, name, namespace string, c kubernetes.Interface, timeout time.Duration) error {
 	vClient := c.CoreV1().PersistentVolumeClaims(namespace)
 	oktetoLog.Infof("destroying volume '%s'", name)
 
 	ticker := time.NewTicker(1 * time.Second)
-	to := time.Now().Add(timeout * 3) // 90 seconds
+	timeoutDuration := 3 * timeout
+	to := time.Now().Add(timeoutDuration) // 90 seconds
+	logDebounceInterval := 5
 
 	for i := 0; ; i++ {
 		err := vClient.Delete(ctx, name, metav1.DeleteOptions{})
@@ -193,7 +193,7 @@ func Destroy(ctx context.Context, name, namespace string, c *kubernetes.Clientse
 			return fmt.Errorf("volume claim '%s' wasn't destroyed after %s", name, timeout.String())
 		}
 
-		if i%10 == 5 {
+		if i%10 == logDebounceInterval {
 			oktetoLog.Infof("waiting for volume '%s' to be destroyed", name)
 		}
 
@@ -216,14 +216,14 @@ func DestroyWithoutTimeout(ctx context.Context, name, namespace string, c kubern
 	err := vClient.Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
 		if !oktetoErrors.IsNotFound(err) {
-			return fmt.Errorf("error deleting kubernetes volume: %s", err)
+			return fmt.Errorf("error deleting kubernetes volume: %w", err)
 		}
 	}
 
 	return nil
 }
 
-func checkIfAttached(ctx context.Context, name, namespace string, c *kubernetes.Clientset) error {
+func checkIfAttached(ctx context.Context, name, namespace string, c kubernetes.Interface) error {
 	pods, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		oktetoLog.Infof("failed to get available pods: %s", err)

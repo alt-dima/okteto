@@ -34,9 +34,9 @@ import (
 )
 
 type patchAnnotations struct {
+	Value map[string]string `json:"value"`
 	Op    string            `json:"op"`
 	Path  string            `json:"path"`
-	Value map[string]string `json:"value"`
 }
 
 // Sandbox returns a base deployment for a dev
@@ -57,7 +57,7 @@ func Sandbox(dev *model.Dev) *appsv1.Deployment {
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: pointer.Int32Ptr(1),
+			Replicas: pointer.Int32(1),
 			Strategy: appsv1.DeploymentStrategy{
 				Type: appsv1.RecreateDeploymentStrategyType,
 			},
@@ -75,7 +75,7 @@ func Sandbox(dev *model.Dev) *appsv1.Deployment {
 				},
 				Spec: apiv1.PodSpec{
 					ServiceAccountName:            dev.ServiceAccount,
-					TerminationGracePeriodSeconds: pointer.Int64Ptr(0),
+					TerminationGracePeriodSeconds: pointer.Int64(0),
 					Containers: []apiv1.Container{
 						{
 							Name:            "dev",
@@ -228,12 +228,12 @@ func IsDevModeOn(d *appsv1.Deployment) bool {
 func Destroy(ctx context.Context, name, namespace string, c kubernetes.Interface) error {
 	oktetoLog.Infof("deleting deployment '%s'", name)
 	dClient := c.AppsV1().Deployments(namespace)
-	err := dClient.Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64Ptr(0)})
+	err := dClient.Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(0)})
 	if err != nil {
 		if oktetoErrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("error deleting kubernetes deployment: %s", err)
+		return fmt.Errorf("error deleting kubernetes deployment: %w", err)
 	}
 	oktetoLog.Infof("deployment '%s' deleted", name)
 	return nil

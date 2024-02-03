@@ -1,3 +1,5 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -13,6 +15,7 @@ package client
 
 import (
 	"context"
+
 	"github.com/okteto/okteto/pkg/types"
 )
 
@@ -22,19 +25,17 @@ type FakePreviewsClient struct {
 }
 
 type FakePreviewResponse struct {
-	Preview        *types.PreviewResponse
-	PreviewList    []types.Preview
-	ResourceStatus map[string]string
+	ErrList           error
+	ErrDeployPreview  error
+	ErrResources      error
+	ErrDestroyPreview error
+	ErrSleepPreview   error
+	ErrWakePreview    error
 
-	ErrList          error
-	ErrDeployPreview error
-
-	ErrResources error
-
-	ErrDestroyPreview   error
+	Preview             *types.PreviewResponse
+	ResourceStatus      map[string]string
+	PreviewList         []types.Preview
 	DestroySuccessCount int
-	ErrSleepPreview     error
-	ErrWakePreview      error
 }
 
 // NewFakePreviewClient returns a new fake preview client

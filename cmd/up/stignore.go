@@ -27,6 +27,7 @@ import (
 	"github.com/okteto/okteto/cmd/manifest"
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/config"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/filesystem"
 	"github.com/okteto/okteto/pkg/linguist"
@@ -117,7 +118,7 @@ func addSyncFieldHash(dev *model.Dev) error {
 	if err != nil {
 		return err
 	}
-	dev.Metadata.Annotations[model.OktetoSyncAnnotation] = fmt.Sprintf("%x", sha512.Sum512([]byte(output)))
+	dev.Metadata.Annotations[model.OktetoSyncAnnotation] = fmt.Sprintf("%x", sha512.Sum512(output))
 	return nil
 }
 
@@ -149,7 +150,7 @@ func checkStignoreConfiguration(dev *model.Dev) error {
 }
 
 func askIfCreateStignoreDefaults(folder, stignorePath string) error {
-	autogenerateStignore := utils.LoadBoolean(model.OktetoAutogenerateStignoreEnvVar)
+	autogenerateStignore := env.LoadBoolean(model.OktetoAutogenerateStignoreEnvVar)
 
 	oktetoLog.Information("'.stignore' doesn't exist in folder '%s'.", folder)
 
@@ -161,7 +162,7 @@ func askIfCreateStignoreDefaults(folder, stignorePath string) error {
 		}
 		c := linguist.GetSTIgnore(l)
 		if err := os.WriteFile(stignorePath, c, 0600); err != nil {
-			return fmt.Errorf("failed to write stignore file for '%s': %s", folder, err.Error())
+			return fmt.Errorf("failed to write stignore file for '%s': %w", folder, err)
 		}
 		return nil
 	}
@@ -169,24 +170,24 @@ func askIfCreateStignoreDefaults(folder, stignorePath string) error {
 	oktetoLog.Information("Okteto requires a '.stignore' file to ignore file patterns that help optimize the synchronization service.")
 	stignoreDefaults, err := utils.AskYesNo("Do you want to infer defaults for the '.stignore' file? (otherwise, it will be left blank)", utils.YesNoDefault_Yes)
 	if err != nil {
-		return fmt.Errorf("failed to add '.stignore' to '%s': %s", folder, err.Error())
+		return fmt.Errorf("failed to add '.stignore' to '%s': %w", folder, err)
 	}
 
 	if !stignoreDefaults {
 		stignoreContent := ""
 		if err := os.WriteFile(stignorePath, []byte(stignoreContent), 0600); err != nil {
-			return fmt.Errorf("failed to create empty '%s': %s", stignorePath, err.Error())
+			return fmt.Errorf("failed to create empty '%s': %w", stignorePath, err)
 		}
 		return nil
 	}
 
 	language, err := manifest.GetLanguage("", folder)
 	if err != nil {
-		return fmt.Errorf("failed to get language for '%s': %s", folder, err.Error())
+		return fmt.Errorf("failed to get language for '%s': %w", folder, err)
 	}
 	c := linguist.GetSTIgnore(language)
 	if err := os.WriteFile(stignorePath, c, 0600); err != nil {
-		return fmt.Errorf("failed to write stignore file for '%s': %s", folder, err.Error())
+		return fmt.Errorf("failed to write stignore file for '%s': %w", folder, err)
 	}
 	return nil
 }
@@ -194,7 +195,7 @@ func askIfCreateStignoreDefaults(folder, stignorePath string) error {
 func checkIfStignoreHasGitFolder(stignorePath string) error {
 	stignoreBytes, err := os.ReadFile(stignorePath)
 	if err != nil {
-		return fmt.Errorf("failed to read '%s': %s", stignorePath, err.Error())
+		return fmt.Errorf("failed to read '%s': %w", stignorePath, err)
 	}
 	stignoreContent := string(stignoreBytes)
 	if strings.Contains(stignoreContent, ".git") {

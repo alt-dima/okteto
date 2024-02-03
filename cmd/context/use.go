@@ -31,12 +31,14 @@ import (
 )
 
 const (
-	personalAccessTokenURL = "https://www.okteto.com/docs/cloud/personal-access-tokens/"
+	personalAccessTokenURL          = "https://www.okteto.com/docs/core/credentials/personal-access-tokens/"
+	suggestInstallOktetoSH          = "Don't have an Okteto instance?\n    Start by installing Okteto on your Kubernetes cluster: https://www.okteto.com/free-trial/"
+	messageSuggestingCurrentContext = "Enter the URL of your Okteto instance: "
 )
 
 // Use context points okteto to a cluster.
 func Use() *cobra.Command {
-	ctxOptions := &ContextOptions{}
+	ctxOptions := &Options{}
 	cmd := &cobra.Command{
 		Use:   "use [<url>|Kubernetes context]",
 		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#use"),
@@ -91,8 +93,8 @@ Or a Kubernetes context:
 	return cmd
 }
 
-func (c *ContextCommand) Run(ctx context.Context, ctxOptions *ContextOptions) error {
-	ctxStore := okteto.ContextStore()
+func (c *Command) Run(ctx context.Context, ctxOptions *Options) error {
+	ctxStore := okteto.GetContextStore()
 	if len(ctxStore.Contexts) == 0 {
 		// if the context store has no context stored, set flag to save the
 		// new one generated. This is necessary for any command other than
@@ -138,32 +140,82 @@ func (c *ContextCommand) Run(ctx context.Context, ctxOptions *ContextOptions) er
 		return err
 	}
 
-	os.Setenv(model.OktetoNamespaceEnvVar, okteto.Context().Namespace)
+	os.Setenv(model.OktetoNamespaceEnvVar, okteto.GetContext().Namespace)
 
 	if ctxOptions.Show {
-		oktetoLog.Information("Using %s @ %s as context", okteto.Context().Namespace, okteto.RemoveSchema(okteto.Context().Name))
+		oktetoLog.Information("Using %s @ %s as context", okteto.GetContext().Namespace, okteto.RemoveSchema(okteto.GetContext().Name))
 	}
 
 	return nil
 }
 
-func getContext(ctxOptions *ContextOptions) (string, error) {
-	ctxs := getContextsSelection(ctxOptions)
-	initialPosition := getInitialPosition(ctxs)
-	selector := utils.NewOktetoSelector("A context defines the default cluster/namespace for any Okteto CLI command.\nSelect the context you want to use:", "Context")
-	oktetoContext, err := selector.AskForOptionsOkteto(ctxs, initialPosition)
+// RunStateless is the fn to use until the refactoring of the context command itself if you want to make use
+// of an injected context instead of using the global context variable.
+func (c *Command) RunStateless(ctx context.Context, ctxOptions *Options) (*okteto.ContextStateless, error) {
+	err := c.Run(ctx, ctxOptions)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	if isCreateNewContextOption(oktetoContext) {
-		oktetoContext, err = askForOktetoURL()
+	cfg := okteto.GetContext().Cfg.DeepCopy()
+
+	oktetoContextStore := okteto.GetContextStoreFromStorePath()
+
+	oktetoContextStateless := &okteto.ContextStateless{
+		Store: oktetoContextStore,
+	}
+
+	oktetoContextStateless.SetCurrentCfg(cfg)
+
+	return oktetoContextStateless, nil
+
+}
+
+func getContext(ctxOptions *Options) (string, error) {
+	ctxs := getAvailableContexts(ctxOptions)
+
+	var oktetoContext string
+	var err error
+	if len(ctxs) > 0 {
+		ctxs = append(ctxs, utils.SelectorItem{
+			Label:  "",
+			Enable: false,
+		})
+		ctxs = append(ctxs, utils.SelectorItem{
+			Name:   newOEOption,
+			Label:  newOEOption,
+			Enable: true,
+		})
+
+		initialPosition := getInitialPosition(ctxs)
+		selector := utils.NewOktetoSelector("A context defines the default Okteto instance or cluster for any Okteto CLI command.\nSelect the context you want to use:", "Option")
+		oktetoContext, err = selector.AskForOptionsOkteto(ctxs, initialPosition)
+		if err != nil {
+			return "", err
+		}
+		if isCreateNewContextOption(oktetoContext) {
+			ctxStore := okteto.GetContextStore()
+			clusterURL := okteto.CloudURL
+			if oCtx, ok := ctxStore.Contexts[ctxStore.CurrentContext]; ok && oCtx.IsOkteto {
+				clusterURL = ctxStore.CurrentContext
+			}
+			question := fmt.Sprintf("%s[%s]: ", messageSuggestingCurrentContext, clusterURL)
+			oktetoContext, err = askForOktetoURL(question)
+			if err != nil {
+				return "", err
+			}
+			ctxOptions.IsOkteto = true
+		} else {
+			ctxOptions.IsOkteto = okteto.IsOktetoContext(oktetoContext)
+		}
+	} else {
+
+		oktetoLog.Information(suggestInstallOktetoSH)
+		oktetoContext, err = askForOktetoURL(messageSuggestingCurrentContext)
 		if err != nil {
 			return "", err
 		}
 		ctxOptions.IsOkteto = true
-	} else {
-		ctxOptions.IsOkteto = okteto.IsOktetoContext(oktetoContext)
 	}
 
 	return oktetoContext, nil

@@ -18,14 +18,17 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/constants"
+	"github.com/okteto/okteto/pkg/env"
+	"github.com/okteto/okteto/pkg/model/utils"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 const (
-	env = `A=hello
+	testEnv = `A=hello
 # comment
 OKTETO_TEST=
 EMPTY_VAR=
@@ -351,8 +354,8 @@ services:
 
 func TestStack_validate(t *testing.T) {
 	tests := []struct {
-		name  string
 		stack *Stack
+		name  string
 	}{
 		{
 			name:  "empty-name",
@@ -403,7 +406,7 @@ func TestStack_validate(t *testing.T) {
 				Name: "name",
 				Services: map[string]*Service{
 					"name": {
-						Volumes: []StackVolume{{RemotePath: "relative"}},
+						Volumes: []build.VolumeMounts{{RemotePath: "relative"}},
 					},
 				},
 			},
@@ -414,7 +417,7 @@ func TestStack_validate(t *testing.T) {
 				Name: "name",
 				Services: map[string]*Service{
 					"name": {
-						Volumes: []StackVolume{{LocalPath: "/source", RemotePath: "/dest"}},
+						Volumes: []build.VolumeMounts{{LocalPath: "/source", RemotePath: "/dest"}},
 					},
 				},
 			},
@@ -475,9 +478,9 @@ func Test_validateStackName(t *testing.T) {
 
 func TestStack_readImageContext(t *testing.T) {
 	tests := []struct {
+		expected *build.Info
 		name     string
 		manifest []byte
-		expected *BuildInfo
 	}{
 		{
 			name: "context pointing to url",
@@ -486,7 +489,7 @@ func TestStack_readImageContext(t *testing.T) {
     build:
       context: https://github.com/okteto/okteto.git
 `),
-			expected: &BuildInfo{
+			expected: &build.Info{
 				Context: "https://github.com/okteto/okteto.git",
 			},
 		},
@@ -497,7 +500,7 @@ func TestStack_readImageContext(t *testing.T) {
     build:
       context: .
 `),
-			expected: &BuildInfo{
+			expected: &build.Info{
 				Context:    ".",
 				Dockerfile: "Dockerfile",
 			},
@@ -517,10 +520,10 @@ func TestStack_readImageContext(t *testing.T) {
 
 func TestStack_Merge(t *testing.T) {
 	tests := []struct {
-		name       string
 		stack      *Stack
 		otherStack *Stack
 		result     *Stack
+		name       string
 	}{
 		{
 			name: "Namespace overwrite",
@@ -539,13 +542,13 @@ func TestStack_Merge(t *testing.T) {
 			stack: &Stack{
 				Services: map[string]*Service{
 					"app": {
-						Volumes: []StackVolume{
+						Volumes: []build.VolumeMounts{
 							{
 								LocalPath:  "/app",
 								RemotePath: "/app",
 							},
 						},
-						VolumeMounts: []StackVolume{
+						VolumeMounts: []build.VolumeMounts{
 							{
 								LocalPath:  "/data",
 								RemotePath: "/data",
@@ -557,13 +560,13 @@ func TestStack_Merge(t *testing.T) {
 			otherStack: &Stack{
 				Services: map[string]*Service{
 					"app": {
-						Volumes: []StackVolume{
+						Volumes: []build.VolumeMounts{
 							{
 								LocalPath:  "/app-test",
 								RemotePath: "/app-test",
 							},
 						},
-						VolumeMounts: []StackVolume{
+						VolumeMounts: []build.VolumeMounts{
 							{
 								LocalPath:  "/data-test",
 								RemotePath: "/data",
@@ -575,13 +578,13 @@ func TestStack_Merge(t *testing.T) {
 			result: &Stack{
 				Services: map[string]*Service{
 					"app": {
-						Volumes: []StackVolume{
+						Volumes: []build.VolumeMounts{
 							{
 								LocalPath:  "/app-test",
 								RemotePath: "/app-test",
 							},
 						},
-						VolumeMounts: []StackVolume{
+						VolumeMounts: []build.VolumeMounts{
 							{
 								LocalPath:  "/data-test",
 								RemotePath: "/data",
@@ -659,7 +662,7 @@ func TestStack_Merge(t *testing.T) {
 			stack: &Stack{
 				Services: map[string]*Service{
 					"app": {
-						Build: &BuildInfo{
+						Build: &build.Info{
 							Name:       "test",
 							Context:    "test",
 							Dockerfile: "test-Dockerfile",
@@ -676,7 +679,7 @@ func TestStack_Merge(t *testing.T) {
 			otherStack: &Stack{
 				Services: map[string]*Service{
 					"app": {
-						Build: &BuildInfo{
+						Build: &build.Info{
 							Name:       "test-overwrite",
 							Context:    "test-overwrite",
 							Dockerfile: "test-overwrite-Dockerfile",
@@ -693,7 +696,7 @@ func TestStack_Merge(t *testing.T) {
 			result: &Stack{
 				Services: map[string]*Service{
 					"app": {
-						Build: &BuildInfo{
+						Build: &build.Info{
 							Name:       "test-overwrite",
 							Context:    "test-overwrite",
 							Dockerfile: "test-overwrite-Dockerfile",
@@ -721,9 +724,9 @@ func TestStack_Merge(t *testing.T) {
 						Command: Command{
 							Values: []string{"app.py"},
 						},
-						EnvFiles: EnvFiles{".env"},
-						Environment: Environment{
-							EnvVar{
+						EnvFiles: env.Files{".env"},
+						Environment: env.Environment{
+							env.Var{
 								Name:  "test",
 								Value: "ok",
 							},
@@ -751,9 +754,9 @@ func TestStack_Merge(t *testing.T) {
 						Command: Command{
 							Values: []string{"run", "main.go"},
 						},
-						EnvFiles: EnvFiles{".env-test"},
-						Environment: Environment{
-							EnvVar{
+						EnvFiles: env.Files{".env-test"},
+						Environment: env.Environment{
+							env.Var{
 								Name:  "test",
 								Value: "overwrite",
 							},
@@ -781,9 +784,9 @@ func TestStack_Merge(t *testing.T) {
 						Command: Command{
 							Values: []string{"run", "main.go"},
 						},
-						EnvFiles: EnvFiles{".env-test"},
-						Environment: Environment{
-							EnvVar{
+						EnvFiles: env.Files{".env-test"},
+						Environment: env.Environment{
+							env.Var{
 								Name:  "test",
 								Value: "overwrite",
 							},
@@ -814,8 +817,8 @@ func TestStack_Merge(t *testing.T) {
 
 func TestStack_ResourcesIsDefault(t *testing.T) {
 	tests := []struct {
-		name      string
 		resources *StackResources
+		name      string
 		expected  bool
 	}{
 		{
@@ -860,10 +863,10 @@ func TestStack_ResourcesIsDefault(t *testing.T) {
 
 func TestStack_ExpandEnvsAtFileLevel(t *testing.T) {
 	tests := []struct {
-		name     string
-		manifest []byte
 		envs     map[string]string
 		stack    *Stack
+		name     string
+		manifest []byte
 	}{
 		{
 			name: "not expanding anything",
@@ -899,7 +902,7 @@ func TestStack_ExpandEnvsAtFileLevel(t *testing.T) {
 			},
 		},
 		{
-			name: "override env image",
+			name: "override testEnv image",
 			manifest: []byte(`services:
   app:
     image: ${IMAGE:-alpine}`),
@@ -961,7 +964,7 @@ func TestStack_ExpandEnvsAtFileLevel(t *testing.T) {
 						Image:         "test",
 						RestartPolicy: "Always",
 						Replicas:      1,
-						Environment: Environment{
+						Environment: env.Environment{
 							{
 								Name:  "TEST",
 								Value: "hello",
@@ -978,7 +981,7 @@ func TestStack_ExpandEnvsAtFileLevel(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create dynamic manifest file: %s", err.Error())
 			}
-			if err := os.WriteFile(tmpFile.Name(), []byte(tt.manifest), 0600); err != nil {
+			if err := os.WriteFile(tmpFile.Name(), tt.manifest, 0600); err != nil {
 				t.Fatalf("failed to write manifest file: %s", err.Error())
 			}
 			defer os.RemoveAll(tmpFile.Name())
@@ -1001,10 +1004,10 @@ func TestStack_ExpandEnvsAtFileLevel(t *testing.T) {
 
 func Test_validateDependsOn(t *testing.T) {
 	tests := []struct {
+		dependsOn  DependsOn
 		name       string
 		manifest   []byte
 		throwError bool
-		dependsOn  DependsOn
 	}{
 		{
 			name:       "defined dependent service",
@@ -1116,12 +1119,12 @@ func Test_getStackName(t *testing.T) {
 			expected:        "stack2",
 		},
 		{
-			testName: "name and actualName and stackPath are empty - name env var not empty",
+			testName: "name and actualName and stackPath are empty - name testEnv var not empty",
 			nameEnv:  "stack3",
 			expected: "stack3",
 		},
 		{
-			testName:  "name and actualName are empty - name env var and stackPath not empty",
+			testName:  "name and actualName are empty - name testEnv var and stackPath not empty",
 			nameEnv:   "stack3",
 			stackPath: "path/to/stack4/compose.yaml",
 			expected:  "stack3",
@@ -1161,7 +1164,7 @@ func Test_getStackName(t *testing.T) {
 				t.Fatalf("expected %s, got %s", tt.expected, res)
 			}
 			if resEnv != tt.expected {
-				t.Fatalf("expected env OKTETO_NAME %s, got %s", tt.expected, resEnv)
+				t.Fatalf("expected testEnv OKTETO_NAME %s, got %s", tt.expected, resEnv)
 			}
 		})
 
@@ -1171,19 +1174,19 @@ func Test_getStackName(t *testing.T) {
 func Test_translateEnvVars(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", ".env")
 	if err != nil {
-		t.Fatalf("failed to create dynamic env file: %s", err.Error())
+		t.Fatalf("failed to create dynamic testEnv file: %s", err.Error())
 	}
-	if err := os.WriteFile(tmpFile.Name(), []byte(env), 0600); err != nil {
-		t.Fatalf("failed to write env file: %s", err.Error())
+	if err := os.WriteFile(tmpFile.Name(), []byte(testEnv), 0600); err != nil {
+		t.Fatalf("failed to write testEnv file: %s", err.Error())
 	}
 	defer os.RemoveAll(tmpFile.Name())
 
 	tmpFile2, err := os.CreateTemp("", ".env")
 	if err != nil {
-		t.Fatalf("failed to create dynamic env file: %s", err.Error())
+		t.Fatalf("failed to create dynamic testEnv file: %s", err.Error())
 	}
 	if err := os.WriteFile(tmpFile2.Name(), []byte(envOverride), 0600); err != nil {
-		t.Fatalf("failed to write env file: %s", err.Error())
+		t.Fatalf("failed to write testEnv file: %s", err.Error())
 	}
 	defer os.RemoveAll(tmpFile2.Name())
 
@@ -1197,7 +1200,7 @@ func Test_translateEnvVars(t *testing.T) {
 			"1": {
 				Image:    "image",
 				EnvFiles: []string{"${ENV_PATH}", "${ENV_PATH2}"},
-				Environment: []EnvVar{
+				Environment: []env.Var{
 					{
 						Name:  "C",
 						Value: "original",
@@ -1242,9 +1245,9 @@ func Test_translateEnvVars(t *testing.T) {
 
 func TestServicesToGraph(t *testing.T) {
 	tests := []struct {
-		name          string
 		services      ComposeServices
-		expectedGraph graph
+		expectedGraph utils.Graph
+		name          string
 	}{
 		{
 			name: "no cycle - no connections",
@@ -1253,7 +1256,7 @@ func TestServicesToGraph(t *testing.T) {
 				"b": &Service{},
 				"c": &Service{},
 			},
-			expectedGraph: graph{
+			expectedGraph: utils.Graph{
 				"a": []string{},
 				"b": []string{},
 				"c": []string{},
@@ -1274,7 +1277,7 @@ func TestServicesToGraph(t *testing.T) {
 				},
 				"c": &Service{},
 			},
-			expectedGraph: graph{
+			expectedGraph: utils.Graph{
 				"a": []string{"b"},
 				"b": []string{"c"},
 				"c": []string{},
@@ -1295,7 +1298,7 @@ func TestServicesToGraph(t *testing.T) {
 				},
 				"c": &Service{},
 			},
-			expectedGraph: graph{
+			expectedGraph: utils.Graph{
 				"a": []string{"b"},
 				"b": []string{"a"},
 				"c": []string{},
@@ -1320,7 +1323,7 @@ func TestServicesToGraph(t *testing.T) {
 					},
 				},
 			},
-			expectedGraph: graph{
+			expectedGraph: utils.Graph{
 				"a": []string{"b"},
 				"b": []string{"c"},
 				"c": []string{"a"},
@@ -1339,9 +1342,9 @@ func TestServicesToGraph(t *testing.T) {
 
 func TestValidateServices(t *testing.T) {
 	tc := []struct {
-		name     string
-		services ComposeServices
 		expected error
+		services ComposeServices
+		name     string
 	}{
 		{
 			name: "no cycle - no connections",

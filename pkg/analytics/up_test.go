@@ -1,25 +1,40 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package analytics
 
 import (
 	"testing"
 	"time"
 
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/deps"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/stretchr/testify/assert"
 )
 
 func Test_UpMetricsMetadata_ManifestProps(t *testing.T) {
 	tests := []struct {
-		name     string
 		manifest *model.Manifest
 		expected *UpMetricsMetadata
+		name     string
 	}{
 		{
 			name: "manifest with build section",
 			manifest: &model.Manifest{
 				IsV2: true,
-				Build: model.ManifestBuild{
-					"service": &model.BuildInfo{
+				Build: build.ManifestBuild{
+					"service": &build.Info{
 						Context: "service",
 					},
 				},
@@ -33,8 +48,8 @@ func Test_UpMetricsMetadata_ManifestProps(t *testing.T) {
 			name: "manifest with dependencies section",
 			manifest: &model.Manifest{
 				IsV2: true,
-				Dependencies: model.ManifestDependencies{
-					"service": &model.Dependency{},
+				Dependencies: deps.ManifestSection{
+					"service": &deps.Dependency{},
 				},
 			},
 			expected: &UpMetricsMetadata{
@@ -83,9 +98,9 @@ func Test_UpMetricsMetadata_ManifestProps(t *testing.T) {
 
 func Test_UpMetricsMetadata_DevProps(t *testing.T) {
 	tests := []struct {
-		name     string
 		dev      *model.Dev
 		expected *UpMetricsMetadata
+		name     string
 	}{
 		{
 			name: "dev interactive sync mode",
@@ -152,9 +167,9 @@ func Test_UpMetricsMetadata_DevProps(t *testing.T) {
 
 func Test_UpMetricsMetadata_RepositoryProps(t *testing.T) {
 	tests := []struct {
+		expected           *UpMetricsMetadata
 		name               string
 		isOktetoRepository bool
-		expected           *UpMetricsMetadata
 	}{
 		{
 			name:               "is okteto repository",
@@ -221,9 +236,9 @@ func Test_UpMetricsMetadata_CommandSuccess(t *testing.T) {
 
 func Test_UpTracker(t *testing.T) {
 	tests := []struct {
+		expected mockEvent
 		name     string
 		meta     UpMetricsMetadata
-		expected mockEvent
 	}{
 		{
 			name: "empty event",
@@ -455,7 +470,7 @@ func Test_UpTracker(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eventMeta := &mockEvent{}
-			tracker := AnalyticsTracker{
+			tracker := Tracker{
 				trackFn: func(event string, success bool, props map[string]interface{}) {
 					eventMeta = &mockEvent{
 						event:   event,

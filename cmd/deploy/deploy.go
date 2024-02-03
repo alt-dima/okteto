@@ -31,13 +31,16 @@ import (
 	"github.com/okteto/okteto/pkg/config"
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/divert"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/externalresource"
 	"github.com/okteto/okteto/pkg/format"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	oktetoPath "github.com/okteto/okteto/pkg/path"
+	"github.com/okteto/okteto/pkg/repository"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -56,6 +59,7 @@ var (
 
 // Options represents options for deploy command
 type Options struct {
+	Manifest *model.Manifest
 	// ManifestPathFlag is the option -f as introduced by the user when executing this command.
 	// This is stored at the configmap as filename to redeploy from the ui.
 	ManifestPathFlag string
@@ -65,20 +69,17 @@ type Options struct {
 	Name             string
 	Namespace        string
 	K8sContext       string
+	Repository       string
+	Branch           string
 	Variables        []string
-	Manifest         *model.Manifest
+	servicesToDeploy []string
+	Timeout          time.Duration
 	Build            bool
 	Dependencies     bool
 	RunWithoutBash   bool
 	RunInRemote      bool
-	servicesToDeploy []string
-
-	Repository string
-	Branch     string
-	Wait       bool
-	Timeout    time.Duration
-
-	ShowCTA bool
+	Wait             bool
+	ShowCTA          bool
 }
 
 type builderInterface interface {
@@ -93,26 +94,30 @@ type getDeployerFunc func(
 	context.Context, *Options,
 	builderInterface,
 	configMapHandler,
-	okteto.K8sClientProvider,
+	okteto.K8sClientProviderWithLogger,
 	kubeConfigHandler,
 	portGetterFunc,
+	*io.Controller,
+	*io.K8sLogger,
 ) (deployerInterface, error)
 
-// DeployCommand defines the config for deploying an app
-type DeployCommand struct {
+// Command defines the config for deploying an app
+type Command struct {
 	GetManifest        func(path string) (*model.Manifest, error)
 	TempKubeconfigFile string
-	K8sClientProvider  okteto.K8sClientProvider
+	K8sClientProvider  okteto.K8sClientProviderWithLogger
 	Builder            builderInterface
 	GetExternalControl func(cfg *rest.Config) ExternalResourceInterface
 	GetDeployer        getDeployerFunc
-	EndpointGetter     func() (EndpointGetter, error)
-	DeployWaiter       DeployWaiter
+	EndpointGetter     func(k8sLogger *io.K8sLogger) (EndpointGetter, error)
+	DeployWaiter       Waiter
 	CfgMapHandler      configMapHandler
 	Fs                 afero.Fs
 	DivertDriver       divert.Driver
-	PipelineCMD        pipelineCMD.PipelineDeployerInterface
+	PipelineCMD        pipelineCMD.DeployerInterface
 	AnalyticsTracker   analyticsTrackerInterface
+	IoCtrl             *io.Controller
+	K8sLogger          *io.K8sLogger
 
 	PipelineType       model.Archetype
 	isRemote           bool
@@ -139,9 +144,9 @@ func NewDeployExternalK8sControl(cfg *rest.Config) ExternalResourceInterface {
 }
 
 // Deploy deploys the okteto manifest
-func Deploy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
+func Deploy(ctx context.Context, at analyticsTrackerInterface, ioCtrl *io.Controller, k8sLogger *io.K8sLogger) *cobra.Command {
 	options := &Options{}
-	fs := &DeployCommand{
+	fs := &Command{
 		Fs: afero.NewOsFs(),
 	}
 	cmd := &cobra.Command{
@@ -171,13 +176,13 @@ func Deploy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 				if err.Error() == fmt.Errorf(oktetoErrors.ErrNotLogged, okteto.CloudURL).Error() {
 					return err
 				}
-				if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.ContextOptions{Namespace: options.Namespace}); err != nil {
+				if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.Options{Namespace: options.Namespace}); err != nil {
 					return err
 				}
 			}
 
 			if okteto.IsOkteto() {
-				create, err := utils.ShouldCreateNamespace(ctx, okteto.Context().Namespace)
+				create, err := utils.ShouldCreateNamespace(ctx, okteto.GetContext().Namespace)
 				if err != nil {
 					return err
 				}
@@ -186,7 +191,7 @@ func Deploy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 					if err != nil {
 						return err
 					}
-					if err := nsCmd.Create(ctx, &namespace.CreateOptions{Namespace: okteto.Context().Namespace}); err != nil {
+					if err := nsCmd.Create(ctx, &namespace.CreateOptions{Namespace: okteto.GetContext().Namespace}); err != nil {
 						return err
 					}
 				}
@@ -195,26 +200,28 @@ func Deploy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 			options.ShowCTA = oktetoLog.IsInteractive()
 			options.servicesToDeploy = args
 
-			k8sClientProvider := okteto.NewK8sClientProvider()
+			k8sClientProvider := okteto.NewK8sClientProviderWithLogger(k8sLogger)
 			pc, err := pipelineCMD.NewCommand()
 			if err != nil {
 				return fmt.Errorf("could not create pipeline command: %w", err)
 			}
-			c := &DeployCommand{
+			c := &Command{
 				GetManifest: model.GetManifestV2,
 
 				GetExternalControl: NewDeployExternalK8sControl,
 				K8sClientProvider:  k8sClientProvider,
 				GetDeployer:        GetDeployer,
-				Builder:            buildv2.NewBuilderFromScratch(at),
-				DeployWaiter:       NewDeployWaiter(k8sClientProvider),
+				Builder:            buildv2.NewBuilderFromScratch(at, ioCtrl),
+				DeployWaiter:       NewDeployWaiter(k8sClientProvider, k8sLogger),
 				EndpointGetter:     NewEndpointGetter,
-				isRemote:           utils.LoadBoolean(constants.OktetoDeployRemote),
-				CfgMapHandler:      NewConfigmapHandler(k8sClientProvider),
+				isRemote:           env.LoadBoolean(constants.OktetoDeployRemote),
+				CfgMapHandler:      NewConfigmapHandler(k8sClientProvider, k8sLogger),
 				Fs:                 afero.NewOsFs(),
 				PipelineCMD:        pc,
 				runningInInstaller: config.RunningInInstaller(),
 				AnalyticsTracker:   at,
+				IoCtrl:             ioCtrl,
+				K8sLogger:          k8sLogger,
 			}
 			startTime := time.Now()
 
@@ -236,7 +243,7 @@ func Deploy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 				oktetoLog.StartSpinner()
 				defer oktetoLog.StopSpinner()
 
-				deployer, err := c.GetDeployer(ctx, options, nil, nil, k8sClientProvider, NewKubeConfig(), model.GetAvailablePort)
+				deployer, err := c.GetDeployer(ctx, options, c.Builder, c.CfgMapHandler, k8sClientProvider, NewKubeConfig(), model.GetAvailablePort, ioCtrl, k8sLogger)
 				if err != nil {
 					return err
 				}
@@ -265,7 +272,7 @@ func Deploy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 }
 
 // RunDeploy runs the deploy sequence
-func (dc *DeployCommand) RunDeploy(ctx context.Context, deployOptions *Options) error {
+func (dc *Command) RunDeploy(ctx context.Context, deployOptions *Options) error {
 	oktetoLog.SetStage("Load manifest")
 	manifest, err := dc.GetManifest(deployOptions.ManifestPath)
 	if err != nil {
@@ -283,20 +290,30 @@ func (dc *DeployCommand) RunDeploy(ctx context.Context, deployOptions *Options) 
 		return oktetoErrors.ErrDeployCantDeploySvcsIfNotCompose
 	}
 
+	// We need to create a client that doesn't go through the proxy to create
+	// the configmap without the deployedByLabel
+	c, _, err := dc.K8sClientProvider.ProvideWithLogger(okteto.GetContext().Cfg, dc.K8sLogger)
+	if err != nil {
+		return err
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get the current working directory: %w", err)
 	}
 
-	// We need to create a client that doesn't go through the proxy to create
-	// the configmap without the deployedByLabel
-	c, _, err := dc.K8sClientProvider.Provide(okteto.Context().Cfg)
+	topLevelGitDir, err := repository.FindTopLevelGitDir(cwd, dc.Fs)
 	if err != nil {
-		return err
+		oktetoLog.Warning("Repository not detected: the env vars '%s' and '%s' might not be available: %s.\n    For more information, check out: https://www.okteto.com/docs/core/using-okteto-cli#built-in-environment-variables", constants.OktetoGitBranchEnvVar, constants.OktetoGitCommitEnvVar, err.Error())
 	}
-	dc.addEnvVars(cwd)
 
-	if err := setDeployOptionsValuesFromManifest(ctx, deployOptions, cwd, c); err != nil {
+	if topLevelGitDir != "" {
+		dc.addEnvVars(topLevelGitDir)
+	} else {
+		dc.addEnvVars(cwd)
+	}
+
+	if err := setDeployOptionsValuesFromManifest(ctx, deployOptions, cwd, c, dc.K8sLogger); err != nil {
 		return err
 	}
 
@@ -358,7 +375,7 @@ func (dc *DeployCommand) RunDeploy(ctx context.Context, deployOptions *Options) 
 		oktetoLog.Infof("failed to recreate failed pods: %s", err.Error())
 	}
 
-	deployer, err := dc.GetDeployer(ctx, deployOptions, dc.Builder, dc.CfgMapHandler, dc.K8sClientProvider, NewKubeConfig(), model.GetAvailablePort)
+	deployer, err := dc.GetDeployer(ctx, deployOptions, dc.Builder, dc.CfgMapHandler, dc.K8sClientProvider, NewKubeConfig(), model.GetAvailablePort, dc.IoCtrl, dc.K8sLogger)
 	if err != nil {
 		return err
 	}
@@ -382,8 +399,8 @@ func (dc *DeployCommand) RunDeploy(ctx context.Context, deployOptions *Options) 
 					return err
 				}
 			}
-			if !utils.LoadBoolean(constants.OktetoWithinDeployCommandContextEnvVar) {
-				eg, err := dc.EndpointGetter()
+			if !env.LoadBoolean(constants.OktetoWithinDeployCommandContextEnvVar) {
+				eg, err := dc.EndpointGetter(dc.K8sLogger)
 				if err != nil {
 					oktetoLog.Infof("could not create endpoint getter: %s", err)
 				}
@@ -393,9 +410,6 @@ func (dc *DeployCommand) RunDeploy(ctx context.Context, deployOptions *Options) 
 			}
 			if deployOptions.ShowCTA {
 				oktetoLog.Success(succesfullyDeployedmsg, deployOptions.Name)
-				if oktetoLog.IsInteractive() {
-					oktetoLog.Information("Run 'okteto up' to activate your development container")
-				}
 			}
 			pipeline.AddDevAnnotations(ctx, deployOptions.Manifest, c)
 		}
@@ -523,7 +537,7 @@ func getDefaultTimeout() time.Duration {
 
 func shouldRunInRemote(opts *Options) bool {
 	// already in remote so we need to deploy locally
-	if utils.LoadBoolean(constants.OktetoDeployRemote) {
+	if env.LoadBoolean(constants.OktetoDeployRemote) {
 		return false
 	}
 
@@ -539,10 +553,11 @@ func shouldRunInRemote(opts *Options) bool {
 		}
 	}
 
-	if utils.LoadBoolean(constants.OktetoForceRemote) {
+	if env.LoadBoolean(constants.OktetoForceRemote) {
 		return true
 	}
 
+	oktetoLog.Information("Use `--remote` to run the deploy commands in your Okteto cluster.\n    More information available here: https://www.okteto.com/docs/reference/manifest/#deploy-remotely")
 	return false
 
 }
@@ -553,20 +568,22 @@ func GetDeployer(ctx context.Context,
 	opts *Options,
 	builder builderInterface,
 	cmapHandler configMapHandler,
-	k8sProvider okteto.K8sClientProvider,
+	k8sProvider okteto.K8sClientProviderWithLogger,
 	kubeconfig kubeConfigHandler,
 	portGetter portGetterFunc,
+	ioCtrl *io.Controller,
+	k8Logger *io.K8sLogger,
 ) (deployerInterface, error) {
 	if shouldRunInRemote(opts) {
 		// run remote
 		oktetoLog.Info("Deploying remotely...")
-		return newRemoteDeployer(builder), nil
+		return newRemoteDeployer(builder, ioCtrl), nil
 	}
 
 	// run local
 	oktetoLog.Info("Deploying locally...")
 
-	deployer, err := newLocalDeployer(ctx, opts, cmapHandler, k8sProvider, kubeconfig, portGetter)
+	deployer, err := newLocalDeployer(ctx, opts, cmapHandler, k8sProvider, kubeconfig, portGetter, k8Logger)
 	if err != nil {
 		eWrapped := fmt.Errorf("could not initialize local deploy command: %w", err)
 		if uError, ok := err.(oktetoErrors.UserError); ok {
@@ -581,26 +598,26 @@ func GetDeployer(ctx context.Context,
 func isRemoteDeployer(runInRemoteFlag bool, deployImage string) bool {
 	// isDeployRemote represents whether the process is coming from a remote deploy
 	// if true it should get the local deployer
-	isDeployRemote := utils.LoadBoolean(constants.OktetoDeployRemote)
+	isDeployRemote := env.LoadBoolean(constants.OktetoDeployRemote)
 
 	// remote deployment should be done when flag RunInRemote is active OR deploy.image is fulfilled
 	return !isDeployRemote && (runInRemoteFlag || deployImage != "")
 }
 
 // deployDependencies deploy the dependencies in the manifest
-func (dc *DeployCommand) deployDependencies(ctx context.Context, deployOptions *Options) error {
-	if len(deployOptions.Manifest.Dependencies) > 0 && !okteto.Context().IsOkteto {
+func (dc *Command) deployDependencies(ctx context.Context, deployOptions *Options) error {
+	if len(deployOptions.Manifest.Dependencies) > 0 && !okteto.GetContext().IsOkteto {
 		return errDepenNotAvailableInVanilla
 	}
 
 	for depName, dep := range deployOptions.Manifest.Dependencies {
 		oktetoLog.Information("Deploying dependency '%s'", depName)
 		oktetoLog.SetStage(fmt.Sprintf("Deploying dependency %s", depName))
-		dep.Variables = append(dep.Variables, model.EnvVar{
+		dep.Variables = append(dep.Variables, env.Var{
 			Name:  "OKTETO_ORIGIN",
 			Value: "okteto-deploy",
 		})
-		namespace := okteto.Context().Namespace
+		namespace := okteto.GetContext().Namespace
 		if dep.Namespace != "" {
 			namespace = dep.Namespace
 		}
@@ -629,28 +646,28 @@ func (dc *DeployCommand) deployDependencies(ctx context.Context, deployOptions *
 	return nil
 }
 
-func (dc *DeployCommand) recreateFailedPods(ctx context.Context, name string) error {
-	c, _, err := dc.K8sClientProvider.Provide(okteto.Context().Cfg)
+func (dc *Command) recreateFailedPods(ctx context.Context, name string) error {
+	c, _, err := dc.K8sClientProvider.ProvideWithLogger(okteto.GetContext().Cfg, dc.K8sLogger)
 	if err != nil {
-		return fmt.Errorf("could not get kubernetes client: %s", err)
+		return fmt.Errorf("could not get kubernetes client: %w", err)
 	}
 
-	pods, err := c.CoreV1().Pods(okteto.Context().Namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", model.DeployedByLabel, format.ResourceK8sMetaString(name))})
+	pods, err := c.CoreV1().Pods(okteto.GetContext().Namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", model.DeployedByLabel, format.ResourceK8sMetaString(name))})
 	if err != nil {
-		return fmt.Errorf("could not list pods: %s", err)
+		return fmt.Errorf("could not list pods: %w", err)
 	}
 	for _, pod := range pods.Items {
 		if pod.Status.Phase == "Failed" {
-			err := c.CoreV1().Pods(okteto.Context().Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+			err := c.CoreV1().Pods(okteto.GetContext().Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
 			if err != nil {
-				return fmt.Errorf("could not delete pod %s: %s", pod.Name, err)
+				return fmt.Errorf("could not delete pod %s: %w", pod.Name, err)
 			}
 		}
 	}
 	return nil
 }
 
-func (dc *DeployCommand) trackDeploy(manifest *model.Manifest, runInRemoteFlag bool, startTime time.Time, err error) {
+func (dc *Command) trackDeploy(manifest *model.Manifest, runInRemoteFlag bool, startTime time.Time, err error) {
 	deployType := "custom"
 	hasDependencySection := false
 	hasBuildSection := false

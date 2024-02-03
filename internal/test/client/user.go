@@ -1,3 +1,5 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -20,10 +22,10 @@ import (
 
 // FakeUserClient is used to mock the userClient interface
 type FakeUserClient struct {
+	errGetUserSecrets error
 	userCtx           *types.UserContext
 	userSecrets       []types.Secret
 	err               []error
-	errGetUserSecrets error
 }
 
 func NewFakeUsersClient(user *types.User, err ...error) *FakeUserClient {

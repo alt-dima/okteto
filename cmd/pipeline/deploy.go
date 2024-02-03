@@ -34,6 +34,7 @@ import (
 	"github.com/okteto/okteto/pkg/k8s/configmaps"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
+	modelUtils "github.com/okteto/okteto/pkg/model/utils"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/repository"
 	"github.com/okteto/okteto/pkg/types"
@@ -55,16 +56,14 @@ type deployFlags struct {
 	repository   string
 	name         string
 	namespace    string
-	wait         bool
-	skipIfExists bool
-	timeout      time.Duration
 	file         string
+	filename     string //Deprecated field
 	variables    []string
 	labels       []string
+	timeout      time.Duration
+	wait         bool
+	skipIfExists bool
 	reuseParams  bool
-
-	// Deprecated fields
-	filename string
 }
 
 // DeployOptions represents options for deploy pipeline command
@@ -73,12 +72,12 @@ type DeployOptions struct {
 	Repository   string
 	Name         string
 	Namespace    string
-	Wait         bool
-	SkipIfExists bool
-	Timeout      time.Duration
 	File         string
 	Variables    []string
 	Labels       []string
+	Timeout      time.Duration
+	Wait         bool
+	SkipIfExists bool
 	ReuseParams  bool
 }
 
@@ -94,7 +93,7 @@ func deploy(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			ctxOptions := &contextCMD.ContextOptions{
+			ctxOptions := &contextCMD.Options{
 				Namespace: ctxResource.Namespace,
 				Show:      true,
 			}
@@ -145,9 +144,9 @@ func (pc *Command) ExecuteDeployPipeline(ctx context.Context, opts *DeployOption
 		return fmt.Errorf("could not set default values for options: %w", err)
 	}
 
-	c, _, err := pc.k8sClientProvider.Provide(okteto.Context().Cfg)
+	c, _, err := pc.k8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
-		return fmt.Errorf("failed to load okteto context '%s': %v", okteto.Context().Name, err)
+		return fmt.Errorf("failed to load okteto context '%s': %w", okteto.GetContext().Name, err)
 	}
 
 	exists := false
@@ -458,7 +457,7 @@ func (o *DeployOptions) setDefaults() error {
 	if o.Repository == "" {
 		oktetoLog.Info("inferring git repository URL")
 
-		o.Repository, err = model.GetRepositoryURL(cwd)
+		o.Repository, err = modelUtils.GetRepositoryURL(cwd)
 		if err != nil {
 			return fmt.Errorf("could not get repository url: %w", err)
 		}
@@ -467,15 +466,15 @@ func (o *DeployOptions) setDefaults() error {
 	if o.Name == "" {
 
 		// in case of inferring the name, o.Name is not sanitized
-		c, _, err := okteto.NewK8sClientProvider().Provide(okteto.Context().Cfg)
+		c, _, err := okteto.NewK8sClientProvider().Provide(okteto.GetContext().Cfg)
 		if err != nil {
 			return err
 		}
 		inferer := devenvironment.NewNameInferer(c)
-		o.Name = inferer.InferNameFromDevEnvsAndRepository(context.Background(), o.Repository, okteto.Context().Namespace, o.File, "")
+		o.Name = inferer.InferNameFromDevEnvsAndRepository(context.Background(), o.Repository, okteto.GetContext().Namespace, o.File, "")
 	}
 
-	currentRepoURL, err := model.GetRepositoryURL(cwd)
+	currentRepoURL, err := modelUtils.GetRepositoryURL(cwd)
 	if err != nil {
 		oktetoLog.Debug("cwd does not have .git folder")
 	}
@@ -495,7 +494,7 @@ func (o *DeployOptions) setDefaults() error {
 	}
 
 	if o.Namespace == "" {
-		o.Namespace = okteto.Context().Namespace
+		o.Namespace = okteto.GetContext().Namespace
 	}
 	return nil
 }
@@ -503,8 +502,9 @@ func (o *DeployOptions) setDefaults() error {
 func (o *DeployOptions) toPipelineDeployClientOptions() (types.PipelineDeployOptions, error) {
 	var varList []types.Variable
 	for _, v := range o.Variables {
-		kv := strings.SplitN(v, "=", 2)
-		if len(kv) != 2 {
+		variableFormatParts := 2
+		kv := strings.SplitN(v, "=", variableFormatParts)
+		if len(kv) != variableFormatParts {
 			return types.PipelineDeployOptions{}, fmt.Errorf("invalid variable value '%s': must follow KEY=VALUE format", v)
 		}
 		varList = append(varList, types.Variable{
