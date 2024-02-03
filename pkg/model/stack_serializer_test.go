@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/env"
 	"github.com/stretchr/testify/assert"
 	yaml "gopkg.in/yaml.v2"
 	apiv1 "k8s.io/api/core/v1"
@@ -101,10 +103,10 @@ func TestTranslateHealthcheckCurlToHttp(t *testing.T) {
 
 func Test_DeployReplicasUnmarshalling(t *testing.T) {
 	tests := []struct {
-		name      string
 		deployRaw *DeployInfoRaw
 		scale     *int32
 		replicas  *int32
+		name      string
 		expected  int32
 	}{
 		{
@@ -123,7 +125,7 @@ func Test_DeployReplicasUnmarshalling(t *testing.T) {
 		},
 		{
 			name:      "deploy-replicas-set",
-			deployRaw: &DeployInfoRaw{Replicas: pointer.Int32Ptr(4)},
+			deployRaw: &DeployInfoRaw{Replicas: pointer.Int32(4)},
 			scale:     nil,
 			replicas:  nil,
 			expected:  4,
@@ -131,7 +133,7 @@ func Test_DeployReplicasUnmarshalling(t *testing.T) {
 		{
 			name:      "scale",
 			deployRaw: &DeployInfoRaw{},
-			scale:     pointer.Int32Ptr(3),
+			scale:     pointer.Int32(3),
 			replicas:  nil,
 			expected:  3,
 		},
@@ -139,20 +141,20 @@ func Test_DeployReplicasUnmarshalling(t *testing.T) {
 			name:      "replicas",
 			deployRaw: &DeployInfoRaw{},
 			scale:     nil,
-			replicas:  pointer.Int32Ptr(2),
+			replicas:  pointer.Int32(2),
 			expected:  2,
 		},
 		{
 			name:      "replicas priority",
-			deployRaw: &DeployInfoRaw{Replicas: pointer.Int32Ptr(1)},
-			scale:     pointer.Int32Ptr(2),
-			replicas:  pointer.Int32Ptr(3),
+			deployRaw: &DeployInfoRaw{Replicas: pointer.Int32(1)},
+			scale:     pointer.Int32(2),
+			replicas:  pointer.Int32(3),
 			expected:  3,
 		},
 		{
 			name:      "deploy priority",
-			deployRaw: &DeployInfoRaw{Replicas: pointer.Int32Ptr(1)},
-			scale:     pointer.Int32Ptr(2),
+			deployRaw: &DeployInfoRaw{Replicas: pointer.Int32(1)},
+			scale:     pointer.Int32(2),
 			replicas:  nil,
 			expected:  1,
 		},
@@ -303,9 +305,9 @@ func Test_DeployResourcesUnmarshalling(t *testing.T) {
 
 func Test_HealthcheckUnmarshalling(t *testing.T) {
 	tests := []struct {
+		expected      *HealthCheck
 		name          string
 		manifest      []byte
-		expected      *HealthCheck
 		expectedError bool
 	}{
 		{
@@ -436,9 +438,9 @@ func Test_HealthcheckUnmarshalling(t *testing.T) {
 
 func Test_NodeSelectorUnmarshalling(t *testing.T) {
 	tests := []struct {
+		expected      Selector
 		name          string
 		manifest      []byte
-		expected      Selector
 		expectedError bool
 	}{
 		{
@@ -479,9 +481,9 @@ func Test_NodeSelectorUnmarshalling(t *testing.T) {
 
 func TestComposeBuildSectionUnmarshalling(t *testing.T) {
 	tests := []struct {
+		expected *composeBuildInfo
 		name     string
 		bytes    []byte
-		expected *composeBuildInfo
 	}{
 		{
 			name:     "with depends on fail",
@@ -788,9 +790,9 @@ func Test_GroupNotSupportedFields(t *testing.T) {
 
 func TestStackResourcesUnmarshalling(t *testing.T) {
 	tests := []struct {
+		expected StackResources
 		name     string
 		data     []byte
-		expected StackResources
 	}{
 		{
 			name: "limits-requests",
@@ -872,9 +874,9 @@ func Test_validateCommandArgs(t *testing.T) {
 	tests := []struct {
 		name        string
 		manifest    []byte
-		isCompose   bool
 		Entrypoint  Entrypoint
 		Command     Command
+		isCompose   bool
 		expectedErr bool
 	}{
 		{
@@ -1002,44 +1004,44 @@ func Test_validateVolumesUnmarshalling(t *testing.T) {
 	tests := []struct {
 		name                 string
 		manifest             []byte
-		expectedVolumes      []StackVolume
-		expectedVolumesMount []StackVolume
+		expectedVolumes      []build.VolumeMounts
+		expectedVolumesMount []build.VolumeMounts
 		expectedError        bool
 	}{
 		{
 			name:     "volume-relative-path-found",
 			manifest: []byte("services:\n  app:\n    volumes: \n    - test_volume_relative_path_found:/var/lib/redpanda/data\n    image: okteto/vote:1\n"),
-			expectedVolumesMount: []StackVolume{
+			expectedVolumesMount: []build.VolumeMounts{
 				{
 					LocalPath:  relativePathExpanded,
 					RemotePath: "/var/lib/redpanda/data",
 				},
 			},
-			expectedVolumes: []StackVolume{},
+			expectedVolumes: []build.VolumeMounts{},
 			expectedError:   false,
 		},
 		{
 			name:     "volume-absolute-path",
 			manifest: []byte(fmt.Sprintf("services:\n  app:\n    volumes: \n    - %s:/var/lib/redpanda/data\n    image: okteto/vote:1\n", relativePathExpanded)),
-			expectedVolumesMount: []StackVolume{
+			expectedVolumesMount: []build.VolumeMounts{
 				{
 					LocalPath:  relativePathExpanded,
 					RemotePath: "/var/lib/redpanda/data",
 				},
 			},
-			expectedVolumes: []StackVolume{},
+			expectedVolumes: []build.VolumeMounts{},
 			expectedError:   false,
 		},
 		{
 			name:     "correct-volume",
 			manifest: []byte("services:\n  app:\n    volumes: \n    - redpanda:/var/lib/redpanda/data\n    image: okteto/vote:1\nvolumes:\n  redpanda:\n"),
-			expectedVolumes: []StackVolume{
+			expectedVolumes: []build.VolumeMounts{
 				{
 					LocalPath:  "redpanda",
 					RemotePath: "/var/lib/redpanda/data",
 				},
 			},
-			expectedVolumesMount: []StackVolume{},
+			expectedVolumesMount: []build.VolumeMounts{},
 			expectedError:        false,
 		},
 		{
@@ -1050,13 +1052,13 @@ func Test_validateVolumesUnmarshalling(t *testing.T) {
 		{
 			name:     "absolute path",
 			manifest: []byte(fmt.Sprintf("services:\n  app:\n    image: okteto/vote:1\n    volumes:\n      - %s:/var/run/docker.sock", relativePathExpandedFile)),
-			expectedVolumesMount: []StackVolume{
+			expectedVolumesMount: []build.VolumeMounts{
 				{
 					LocalPath:  relativePathExpandedFile,
 					RemotePath: "/var/run/docker.sock",
 				},
 			},
-			expectedVolumes: []StackVolume{},
+			expectedVolumes: []build.VolumeMounts{},
 			expectedError:   false,
 		},
 		{
@@ -1067,8 +1069,8 @@ func Test_validateVolumesUnmarshalling(t *testing.T) {
 		{
 			name:                 "pv",
 			manifest:             []byte("services:\n  app:\n    volumes: \n    - /var/lib/redpanda/data\n    image: okteto/vote:1\n"),
-			expectedVolumesMount: []StackVolume{},
-			expectedVolumes: []StackVolume{
+			expectedVolumesMount: []build.VolumeMounts{},
+			expectedVolumes: []build.VolumeMounts{
 				{
 					RemotePath: "/var/lib/redpanda/data",
 				},
@@ -1078,13 +1080,13 @@ func Test_validateVolumesUnmarshalling(t *testing.T) {
 		{
 			name:     "volume-with-underscores",
 			manifest: []byte("services:\n  app:\n    volumes: \n    - redpanda_a:/var/lib/redpanda/data\n    image: okteto/vote:1\nvolumes:\n  redpanda_a:\n"),
-			expectedVolumes: []StackVolume{
+			expectedVolumes: []build.VolumeMounts{
 				{
 					LocalPath:  "redpanda-a",
 					RemotePath: "/var/lib/redpanda/data",
 				},
 			},
-			expectedVolumesMount: []StackVolume{},
+			expectedVolumesMount: []build.VolumeMounts{},
 			expectedError:        false,
 		},
 	}
@@ -1105,8 +1107,8 @@ func Test_validateIngressCreationPorts(t *testing.T) {
 	tests := []struct {
 		name     string
 		manifest []byte
-		isPublic bool
 		ports    []Port
+		isPublic bool
 	}{
 		{
 			name:     "expose-range-and-ports-range",
@@ -1218,9 +1220,9 @@ func Test_validateIngressCreationPorts(t *testing.T) {
 
 func Test_unmarshalVolumes(t *testing.T) {
 	tests := []struct {
+		expectedVolume *VolumeSpec
 		name           string
 		manifest       []byte
-		expectedVolume *VolumeSpec
 	}{
 		{
 			name:           "simple volume",
@@ -1307,8 +1309,8 @@ func Test_sanitizeVolumeName(t *testing.T) {
 func Test_UnmarshalRestart(t *testing.T) {
 	tests := []struct {
 		name     string
-		manifest []byte
 		result   apiv1.RestartPolicy
+		manifest []byte
 		throwErr bool
 	}{
 		{
@@ -1391,8 +1393,8 @@ func Test_UnmarshalRestart(t *testing.T) {
 func Test_UnmarshalSvcName(t *testing.T) {
 	tests := []struct {
 		name            string
-		manifest        []byte
 		svcName         string
+		manifest        []byte
 		isSvcNameChange bool
 	}{
 		{
@@ -1439,10 +1441,10 @@ func Test_UnmarshalSvcName(t *testing.T) {
 
 func Test_DeployLabels(t *testing.T) {
 	tests := []struct {
-		name        string
-		manifest    []byte
 		annotations Annotations
 		labels      Labels
+		name        string
+		manifest    []byte
 		isCompose   bool
 	}{
 
@@ -1509,9 +1511,9 @@ func Test_DeployLabels(t *testing.T) {
 
 func Test_endpoints(t *testing.T) {
 	tests := []struct {
+		expected EndpointSpec
 		name     string
 		manifest []byte
-		expected EndpointSpec
 	}{
 		{
 			name: "rule with name",
@@ -1645,27 +1647,27 @@ func Test_validateEnvFiles(t *testing.T) {
 	tests := []struct {
 		name     string
 		manifest []byte
-		EnvFiles EnvFiles
+		EnvFiles env.Files
 	}{
 		{
 			name:     "sneak case single file",
-			manifest: []byte("services:\n  app:\n    env_file: .env\n    public: true\n    image: okteto/vote:1"),
-			EnvFiles: EnvFiles{".env"},
+			manifest: []byte("services:\n  app:\n    env_file: .testEnv\n    public: true\n    image: okteto/vote:1"),
+			EnvFiles: env.Files{".testEnv"},
 		},
 		{
 			name:     "sneak case list",
-			manifest: []byte("services:\n  app:\n    env_file:\n    - .env\n    - .env2\n    image: okteto/vote:1"),
-			EnvFiles: EnvFiles{".env", ".env2"},
+			manifest: []byte("services:\n  app:\n    env_file:\n    - .testEnv\n    - .env2\n    image: okteto/vote:1"),
+			EnvFiles: env.Files{".testEnv", ".env2"},
 		},
 		{
 			name:     "camel case single file",
-			manifest: []byte("services:\n  app:\n    envFile: .env\n    image: okteto/vote:1"),
-			EnvFiles: EnvFiles{".env"},
+			manifest: []byte("services:\n  app:\n    envFile: .testEnv\n    image: okteto/vote:1"),
+			EnvFiles: env.Files{".testEnv"},
 		},
 		{
 			name:     "camel case list",
-			manifest: []byte("services:\n  app:\n    envFile:\n    - .env\n    - .env2\n    image: okteto/vote:1"),
-			EnvFiles: EnvFiles{".env", ".env2"},
+			manifest: []byte("services:\n  app:\n    envFile:\n    - .testEnv\n    - .env2\n    image: okteto/vote:1"),
+			EnvFiles: env.Files{".testEnv", ".env2"},
 		},
 	}
 	for _, tt := range tests {
@@ -1688,32 +1690,32 @@ func Test_Environment(t *testing.T) {
 	tests := []struct {
 		name        string
 		manifest    []byte
-		environment Environment
+		environment env.Environment
 	}{
 		{
 			name:        "envs",
 			manifest:    []byte("services:\n  app:\n    environment:\n        env: production\n    image: okteto/vote:1"),
-			environment: Environment{EnvVar{Name: "env", Value: "production"}},
+			environment: env.Environment{env.Var{Name: "env", Value: "production"}},
 		},
 		{
 			name:        "empty envs",
-			manifest:    []byte("services:\n  app:\n    environment:\n      - env\n    image: okteto/vote:1"),
-			environment: Environment{},
+			manifest:    []byte("services:\n  app:\n    environment:\n      - testEnv\n    image: okteto/vote:1"),
+			environment: env.Environment{},
 		},
 		{
 			name:        "empty envs - exists envar",
 			manifest:    []byte("services:\n  app:\n    environment:\n        OKTETO_ENVTEST:\n    image: okteto/vote:1"),
-			environment: Environment{EnvVar{Name: "OKTETO_ENVTEST", Value: "myvalue"}},
+			environment: env.Environment{env.Var{Name: "OKTETO_ENVTEST", Value: "myvalue"}},
 		},
 		{
 			name:        "empty list envs - exists envar",
 			manifest:    []byte("services:\n  app:\n    environment:\n      - OKTETO_ENVTEST\n    image: okteto/vote:1"),
-			environment: Environment{EnvVar{Name: "OKTETO_ENVTEST", Value: "myvalue"}},
+			environment: env.Environment{env.Var{Name: "OKTETO_ENVTEST", Value: "myvalue"}},
 		},
 		{
 			name:        "noenvs",
 			manifest:    []byte("services:\n  app:\n    image: okteto/vote:1"),
-			environment: Environment{},
+			environment: env.Environment{},
 		},
 	}
 	for _, tt := range tests {
@@ -1735,9 +1737,9 @@ func Test_Environment(t *testing.T) {
 
 func Test_MultipleEndpoints(t *testing.T) {
 	tests := []struct {
+		expectedStack *Stack
 		name          string
 		manifest      []byte
-		expectedStack *Stack
 		svcPublic     bool
 	}{
 		{
@@ -1883,17 +1885,17 @@ services:
 
 func Test_ExtensionUnmarshalling(t *testing.T) {
 	tests := []struct {
+		expected      *Service
 		name          string
 		manifest      []byte
-		expected      *Service
 		expectedError bool
 	}{
 		{
 			name:     "test anchors expansion",
-			manifest: []byte("x-env: &env\n  environment:\n  - SOME_ENV_VAR=123\nservices:\n  app:\n    <<: *env"),
+			manifest: []byte("x-env: &testEnv\n  environment:\n  - SOME_ENV_VAR=123\nservices:\n  app:\n    <<: *testEnv"),
 			expected: &Service{
-				Environment: Environment{
-					EnvVar{
+				Environment: env.Environment{
+					env.Var{
 						Name:  "SOME_ENV_VAR",
 						Value: "123",
 					},
@@ -1908,7 +1910,7 @@ func Test_ExtensionUnmarshalling(t *testing.T) {
 				Command: Command{
 					Values: []string{"bash"},
 				},
-				Environment: Environment{},
+				Environment: env.Environment{},
 			},
 			expectedError: false,
 		},
@@ -1937,10 +1939,10 @@ func Test_ExtensionUnmarshalling(t *testing.T) {
 
 func Test_UnmarshalStackUser(t *testing.T) {
 	tests := []struct {
+		expected      *StackSecurityContext
 		name          string
 		manifest      []byte
 		errorExpected bool
-		expected      *StackSecurityContext
 	}{
 		{
 			name:     "expanded form",
@@ -1967,7 +1969,7 @@ func Test_UnmarshalStackUser(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var result *StackSecurityContext
-			if err := yaml.Unmarshal([]byte(tt.manifest), &result); err != nil {
+			if err := yaml.Unmarshal(tt.manifest, &result); err != nil {
 				if !tt.errorExpected {
 					t.Fatalf("unexpected error unmarshaling %s: %s", tt.name, err.Error())
 				}

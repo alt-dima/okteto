@@ -24,14 +24,16 @@ import (
 
 	buildv2 "github.com/okteto/okteto/cmd/build/v2"
 	"github.com/okteto/okteto/cmd/utils"
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/env"
 	"github.com/okteto/okteto/pkg/format"
+	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/types"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	apiv1 "k8s.io/api/core/v1"
-
-	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -51,6 +53,9 @@ const (
 	destroyingStatus  = "destroying"
 
 	pvcName = "pvc"
+
+	// oktetoComposeVolumeAffinityEnabledEnvVar represents whether the feature flag to enable volume affinity is enabled or not
+	oktetoComposeVolumeAffinityEnabledEnvVar = "OKTETO_COMPOSE_VOLUME_AFFINITY_ENABLED"
 )
 
 // +enum
@@ -67,9 +72,9 @@ const (
 	onDeleteUpdateStrategy updateStrategy = "on-delete"
 )
 
-func buildStackImages(ctx context.Context, s *model.Stack, options *StackDeployOptions, analyticsTracker analyticsTrackerInterface) error {
+func buildStackImages(ctx context.Context, s *model.Stack, options *DeployOptions, analyticsTracker analyticsTrackerInterface, ioCtrl *io.Controller) error {
 	manifest := model.NewManifestFromStack(s)
-	builder := buildv2.NewBuilderFromScratch(analyticsTracker)
+	builder := buildv2.NewBuilderFromScratch(analyticsTracker, ioCtrl)
 	if options.ForceBuild {
 		buildOptions := &types.BuildOptions{
 			Manifest:    manifest,
@@ -127,7 +132,7 @@ func translateDeployment(svcName string, s *model.Stack) *appsv1.Deployment {
 			Annotations: translateAnnotations(svc),
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: pointer.Int32Ptr(svc.Replicas),
+			Replicas: pointer.Int32(svc.Replicas),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: translateLabelSelector(svcName, s),
 			},
@@ -138,7 +143,7 @@ func translateDeployment(svcName string, s *model.Stack) *appsv1.Deployment {
 					Annotations: translateAnnotations(svc),
 				},
 				Spec: apiv1.PodSpec{
-					TerminationGracePeriodSeconds: pointer.Int64Ptr(svc.StopGracePeriod),
+					TerminationGracePeriodSeconds: pointer.Int64(svc.StopGracePeriod),
 					NodeSelector:                  svc.NodeSelector,
 					Containers: []apiv1.Container{
 						{
@@ -198,8 +203,8 @@ func translateStatefulSet(svcName string, s *model.Stack) *appsv1.StatefulSet {
 			Annotations: translateAnnotations(svc),
 		},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas:             pointer.Int32Ptr(svc.Replicas),
-			RevisionHistoryLimit: pointer.Int32Ptr(2),
+			Replicas:             pointer.Int32(svc.Replicas),
+			RevisionHistoryLimit: pointer.Int32(2),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: translateLabelSelector(svcName, s),
 			},
@@ -211,7 +216,7 @@ func translateStatefulSet(svcName string, s *model.Stack) *appsv1.StatefulSet {
 					Annotations: translateAnnotations(svc),
 				},
 				Spec: apiv1.PodSpec{
-					TerminationGracePeriodSeconds: pointer.Int64Ptr(svc.StopGracePeriod),
+					TerminationGracePeriodSeconds: pointer.Int64(svc.StopGracePeriod),
 					InitContainers:                initContainers,
 					Affinity:                      translateAffinity(svc),
 					NodeSelector:                  svc.NodeSelector,
@@ -252,8 +257,8 @@ func translateJob(svcName string, s *model.Stack) *batchv1.Job {
 			Annotations: translateAnnotations(svc),
 		},
 		Spec: batchv1.JobSpec{
-			Completions:  pointer.Int32Ptr(svc.Replicas),
-			Parallelism:  pointer.Int32Ptr(1),
+			Completions:  pointer.Int32(svc.Replicas),
+			Parallelism:  pointer.Int32(1),
 			BackoffLimit: &svc.BackOffLimit,
 			Template: apiv1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -262,7 +267,7 @@ func translateJob(svcName string, s *model.Stack) *batchv1.Job {
 				},
 				Spec: apiv1.PodSpec{
 					RestartPolicy:                 svc.RestartPolicy,
-					TerminationGracePeriodSeconds: pointer.Int64Ptr(svc.StopGracePeriod),
+					TerminationGracePeriodSeconds: pointer.Int64(svc.StopGracePeriod),
 					InitContainers:                initContainers,
 					Affinity:                      translateAffinity(svc),
 					NodeSelector:                  svc.NodeSelector,
@@ -461,6 +466,10 @@ func translateVolumeLabels(volumeName string, s *model.Stack) map[string]string 
 }
 
 func translateAffinity(svc *model.Service) *apiv1.Affinity {
+	if !env.LoadBooleanOrDefault(oktetoComposeVolumeAffinityEnabledEnvVar, true) {
+		return nil
+	}
+
 	requirements := make([]apiv1.PodAffinityTerm, 0)
 	for _, volume := range svc.Volumes {
 		if volume.LocalPath == "" {
@@ -554,7 +563,7 @@ func translateVolumeMounts(svc *model.Service) []apiv1.VolumeMount {
 	return result
 }
 
-func getVolumeClaimName(v *model.StackVolume) string {
+func getVolumeClaimName(v *build.VolumeMounts) string {
 	var name string
 	if v.LocalPath != "" {
 		name = v.LocalPath
@@ -618,7 +627,7 @@ func translateServicePorts(svc model.Service) []apiv1.ServicePort {
 				result,
 				apiv1.ServicePort{
 					Name:       fmt.Sprintf("p-%d-%d-%s", p.ContainerPort, p.ContainerPort, strings.ToLower(fmt.Sprintf("%v", p.Protocol))),
-					Port:       int32(p.ContainerPort),
+					Port:       p.ContainerPort,
 					TargetPort: intstr.IntOrString{IntVal: p.ContainerPort},
 					Protocol:   p.Protocol,
 				},
@@ -629,7 +638,7 @@ func translateServicePorts(svc model.Service) []apiv1.ServicePort {
 				result,
 				apiv1.ServicePort{
 					Name:       fmt.Sprintf("p-%d-%d-%s", p.HostPort, p.ContainerPort, strings.ToLower(fmt.Sprintf("%v", p.Protocol))),
-					Port:       int32(p.HostPort),
+					Port:       p.HostPort,
 					TargetPort: intstr.IntOrString{IntVal: p.ContainerPort},
 					Protocol:   p.Protocol,
 				},

@@ -1,3 +1,16 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package preview
 
 import (
@@ -68,9 +81,9 @@ func Test_getPreviewOutput(t *testing.T) {
 
 func Test_validatePreviewListOutput(t *testing.T) {
 	var tests = []struct {
+		expectedErr error
 		name        string
 		output      string
-		expectedErr error
 	}{
 		{
 			name:        "output format is yaml",
@@ -99,8 +112,8 @@ func Test_validatePreviewListOutput(t *testing.T) {
 func Test_getPreviewDefaultOutput(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    previewOutput
 		expected string
+		input    previewOutput
 	}{
 		{
 			name: "preview with no labels",
@@ -133,11 +146,10 @@ func Test_getPreviewDefaultOutput(t *testing.T) {
 
 func Test_displayListPreviews(t *testing.T) {
 	tests := []struct {
-		name   string
-		format string
-		input  []previewOutput
-
+		name           string
+		format         string
 		expectedOutput string
+		input          []previewOutput
 	}{
 		{
 			name:           "empty list ",
@@ -191,7 +203,7 @@ test2  global    true      -
 					Sleeping: true,
 				},
 			},
-			expectedOutput: "[\n {\n  \"name\": \"test\",\n  \"scope\": \"personal\",\n  \"sleeping\": true,\n  \"labels\": [\n   \"test\",\n   \"okteto\"\n  ]\n },\n {\n  \"name\": \"test2\",\n  \"scope\": \"global\",\n  \"sleeping\": true,\n  \"labels\": null\n }\n]\n",
+			expectedOutput: "[\n {\n  \"name\": \"test\",\n  \"scope\": \"personal\",\n  \"labels\": [\n   \"test\",\n   \"okteto\"\n  ],\n  \"sleeping\": true\n },\n {\n  \"name\": \"test2\",\n  \"scope\": \"global\",\n  \"labels\": null,\n  \"sleeping\": true\n }\n]\n",
 		},
 		{
 			name:   "list - yaml format",
@@ -209,7 +221,7 @@ test2  global    true      -
 					Sleeping: true,
 				},
 			},
-			expectedOutput: "- name: test\n  scope: personal\n  sleeping: true\n  labels:\n  - test\n  - okteto\n- name: test2\n  scope: global\n  sleeping: true\n  labels: []\n\n",
+			expectedOutput: "- name: test\n  scope: personal\n  labels:\n  - test\n  - okteto\n  sleeping: true\n- name: test2\n  scope: global\n  labels: []\n  sleeping: true\n\n",
 		},
 	}
 
@@ -241,10 +253,10 @@ test2  global    true      -
 func Test_newListPreviewCommand(t *testing.T) {
 
 	tests := []struct {
-		name     string
 		okClient types.OktetoInterface
 		flags    *listFlags
 		expected *listPreviewCommand
+		name     string
 	}{
 		{
 			name:     "empty input",
@@ -278,9 +290,9 @@ func Test_newListPreviewCommand(t *testing.T) {
 func Test_run(t *testing.T) {
 
 	tests := []struct {
-		name      string
-		cmd       *listPreviewCommand
 		expectErr error
+		cmd       *listPreviewCommand
+		name      string
 	}{
 		{
 			name: "invalid list output format",

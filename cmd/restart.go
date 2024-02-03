@@ -26,10 +26,8 @@ import (
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/k8s/pods"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
-	"github.com/okteto/okteto/pkg/okteto"
-
 	"github.com/okteto/okteto/pkg/model"
-
+	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/spf13/cobra"
 )
 
@@ -40,7 +38,7 @@ func Restart() *cobra.Command {
 	var devPath string
 
 	cmd := &cobra.Command{
-		Use:    "restart [svc]",
+		Use:    "restart [service]",
 		Short:  "Restart the deployments listed in the services field of a development container",
 		Args:   utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#restart"),
 		Hidden: true,
@@ -79,7 +77,7 @@ func Restart() *cobra.Command {
 			}
 			err = executeRestart(ctx, dev, serviceName)
 			if err != nil {
-				return fmt.Errorf("failed to restart your deployments: %s", err)
+				return fmt.Errorf("failed to restart your deployments: %w", err)
 			}
 			analytics.TrackRestart(err == nil)
 

@@ -16,7 +16,13 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"text/tabwriter"
+
 	contextCMD "github.com/okteto/okteto/cmd/context"
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/constants"
@@ -27,21 +33,17 @@ import (
 	"github.com/okteto/okteto/pkg/repository"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
-	"io"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
-	"os"
-	"strings"
-	"text/tabwriter"
 )
 
 type listFlags struct {
-	labels    []string
 	context   string
 	namespace string
 	output    string
+	labels    []string
 }
 
 type pipelineListItem struct {
@@ -74,7 +76,7 @@ func list(ctx context.Context) *cobra.Command {
 // pipelineListCommandHandler prepares the right okteto context depending on the provided flags and then calls the actual function that lists pipelines
 func pipelineListCommandHandler(ctx context.Context, flags *listFlags, initOkCtx initOkCtxFn) error {
 	ctxResource := &model.ContextResource{}
-	ctxOptions := &contextCMD.ContextOptions{
+	ctxOptions := &contextCMD.Options{
 		Show: false,
 	}
 	if flags.output == "" {
@@ -100,7 +102,7 @@ func pipelineListCommandHandler(ctx context.Context, flags *listFlags, initOkCtx
 		return err
 	}
 
-	okCtx := okteto.Context()
+	okCtx := okteto.GetContext()
 
 	if !okCtx.IsOkteto {
 		return oktetoErrors.ErrContextIsNotOktetoCluster
@@ -116,13 +118,13 @@ func pipelineListCommandHandler(ctx context.Context, flags *listFlags, initOkCtx
 	}
 	c, _, err := pc.k8sClientProvider.Provide(okCtx.Cfg)
 	if err != nil {
-		return fmt.Errorf("failed to load okteto context '%s': %v", okCtx.Name, err)
+		return fmt.Errorf("failed to load okteto context '%s': %w", okCtx.Name, err)
 	}
 
 	return executeListPipelines(ctx, *flags, configmaps.List, getPipelineListOutput, c, os.Stdout)
 }
 
-type initOkCtxFn func(ctx context.Context, ctxOptions *contextCMD.ContextOptions) error
+type initOkCtxFn func(ctx context.Context, ctxOptions *contextCMD.Options) error
 type getPipelineListOutputFn func(ctx context.Context, listPipelines listPipelinesFn, namespace, labelSelector string, c kubernetes.Interface) ([]pipelineListItem, error)
 type listPipelinesFn func(ctx context.Context, namespace, labelSelector string, c kubernetes.Interface) ([]apiv1.ConfigMap, error)
 
@@ -182,7 +184,7 @@ func getLabelSelector(labels []string) (string, error) {
 		}
 		errs := validation.IsValidLabelValue(label)
 		if len(errs) > 0 {
-			return "", fmt.Errorf("invalid label '%s': %v", label, errs[0])
+			return "", fmt.Errorf("invalid label '%s': %w", label, errors.New(errs[0]))
 		}
 		labelSelector = append(labelSelector, fmt.Sprintf("%s/%s", constants.EnvironmentLabelKeyPrefix, label))
 	}

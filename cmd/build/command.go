@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+
 	"github.com/moby/buildkit/frontend/dockerfile/instructions"
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	buildv1 "github.com/okteto/okteto/cmd/build/v1"
@@ -26,25 +28,34 @@ import (
 	"github.com/okteto/okteto/cmd/namespace"
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/analytics"
-	"github.com/okteto/okteto/pkg/cmd/build"
+	buildCmd "github.com/okteto/okteto/pkg/cmd/build"
 	"github.com/okteto/okteto/pkg/discovery"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
-	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
 	"github.com/okteto/okteto/pkg/types"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"os"
+)
+
+type outputFormat string
+
+const (
+	// TTYFormat is the default format for the output
+	TTYFormat outputFormat = "tty"
 )
 
 // Command defines the build command
 type Command struct {
 	GetManifest func(path string) (*model.Manifest, error)
 
-	Builder          build.OktetoBuilderInterface
+	Builder          buildCmd.OktetoBuilderInterface
 	Registry         registryInterface
 	analyticsTracker analyticsTrackerInterface
+	ioCtrl           *io.Controller
+	k8slogger        *io.K8sLogger
 }
 
 type analyticsTrackerInterface interface {
@@ -64,11 +75,17 @@ type registryInterface interface {
 }
 
 // NewBuildCommand creates a struct to run all build methods
-func NewBuildCommand(analyticsTracker analyticsTrackerInterface) *Command {
+func NewBuildCommand(ioCtrl *io.Controller, analyticsTracker analyticsTrackerInterface, okCtx *okteto.ContextStateless, k8slogger *io.K8sLogger) *Command {
+
 	return &Command{
-		GetManifest:      model.GetManifestV2,
-		Builder:          &build.OktetoBuilder{},
-		Registry:         registry.NewOktetoRegistry(okteto.Config{}),
+		GetManifest: model.GetManifestV2,
+		Builder: &buildCmd.OktetoBuilder{
+			OktetoContext: okCtx,
+			Fs:            afero.NewOsFs(),
+		},
+		Registry:         registry.NewOktetoRegistry(buildCmd.GetRegistryConfigFromOktetoConfig(okCtx)),
+		ioCtrl:           ioCtrl,
+		k8slogger:        k8slogger,
 		analyticsTracker: analyticsTracker,
 	}
 }
@@ -79,23 +96,27 @@ const (
 )
 
 // Build build and optionally push a Docker image
-func Build(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
-
+func Build(ctx context.Context, ioCtrl *io.Controller, at analyticsTrackerInterface, k8slogger *io.K8sLogger) *cobra.Command {
 	options := &types.BuildOptions{}
 	cmd := &cobra.Command{
 		Use:   "build [service...]",
 		Short: "Build and push the images defined in the 'build' section of your okteto manifest",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.CommandArgs = args
-			bc := NewBuildCommand(at)
 			// The context must be loaded before reading manifest. Otherwise,
 			// secrets will not be resolved when GetManifest is called and
 			// the manifest will load empty values.
-			if err := bc.loadContext(ctx, options); err != nil {
+			oktetoContext, err := getOktetoContext(ctx, options)
+			if err != nil {
 				return err
 			}
 
-			builder, err := bc.getBuilder(options)
+			ioCtrl.Logger().Info("context loaded")
+
+			bc := NewBuildCommand(ioCtrl, at, oktetoContext, k8slogger)
+
+			builder, err := bc.getBuilder(options, oktetoContext)
+
 			if err != nil {
 				return err
 			}
@@ -120,7 +141,7 @@ func Build(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 	cmd.Flags().BoolVarP(&options.NoCache, "no-cache", "", false, "do not use cache when building the image")
 	cmd.Flags().StringArrayVar(&options.CacheFrom, "cache-from", nil, "cache source images")
 	cmd.Flags().StringArrayVar(&options.ExportCache, "export-cache", nil, "export cache images")
-	cmd.Flags().StringVarP(&options.OutputMode, "progress", "", oktetoLog.TTYFormat, "show plain/tty build output")
+	cmd.Flags().StringVarP(&options.OutputMode, "progress", "", string(TTYFormat), "show plain/tty build output")
 	cmd.Flags().StringArrayVar(&options.BuildArgs, "build-arg", nil, "set build-time variables")
 	cmd.Flags().StringArrayVar(&options.Secrets, "secret", nil, "secret files exposed to the build. Format: id=mysecret,src=/local/secret")
 	cmd.Flags().StringVar(&options.Platform, "platform", "", "set platform if server is multi-platform capable")
@@ -129,7 +150,7 @@ func Build(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 	return cmd
 }
 
-func (bc *Command) getBuilder(options *types.BuildOptions) (Builder, error) {
+func (bc *Command) getBuilder(options *types.BuildOptions, okCtx *okteto.ContextStateless) (Builder, error) {
 	var builder Builder
 
 	manifest, err := bc.GetManifest(options.File)
@@ -138,13 +159,15 @@ func (bc *Command) getBuilder(options *types.BuildOptions) (Builder, error) {
 			return nil, err
 		}
 
-		oktetoLog.Infof("The manifest %s is not v2 compatible, falling back to building as a v1 manifest: %v", options.File, err)
-		builder = buildv1.NewBuilder(bc.Builder, bc.Registry)
+		bc.ioCtrl.Logger().Infof("manifest located at %s is not v2 compatible: %s", options.File, err)
+		bc.ioCtrl.Logger().Info("falling back to building as a v1 manifest")
+
+		builder = buildv1.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl)
 	} else {
 		if isBuildV2(manifest) {
-			builder = buildv2.NewBuilder(bc.Builder, bc.Registry, bc.analyticsTracker)
+			builder = buildv2.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl, bc.analyticsTracker, okCtx, bc.k8slogger)
 		} else {
-			builder = buildv1.NewBuilder(bc.Builder, bc.Registry)
+			builder = buildv1.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl)
 		}
 	}
 
@@ -172,8 +195,8 @@ func validateDockerfile(file string) error {
 	return err
 }
 
-func (*Command) loadContext(ctx context.Context, options *types.BuildOptions) error {
-	ctxOpts := &contextCMD.ContextOptions{
+func getOktetoContext(ctx context.Context, options *types.BuildOptions) (*okteto.ContextStateless, error) {
+	ctxOpts := &contextCMD.Options{
 		Context:   options.K8sContext,
 		Namespace: options.Namespace,
 		Show:      true,
@@ -185,7 +208,7 @@ func (*Command) loadContext(ctx context.Context, options *types.BuildOptions) er
 	if err := validateDockerfile(options.File); err != nil {
 		ctxResource, err := model.GetContextResource(options.File)
 		if err != nil && !errors.Is(err, discovery.ErrOktetoManifestNotFound) {
-			return err
+			return nil, err
 		}
 
 		// if ctxResource == nil (we cannot obtain context and namespace from the
@@ -193,32 +216,59 @@ func (*Command) loadContext(ctx context.Context, options *types.BuildOptions) er
 		// used to obtain the current context and the namespace associated with it.
 		if ctxResource != nil {
 			if err := ctxResource.UpdateNamespace(options.Namespace); err != nil {
-				return err
+				return nil, err
 			}
 			ctxOpts.Namespace = ctxResource.Namespace
 
 			if err := ctxResource.UpdateContext(options.K8sContext); err != nil {
-				return err
+				return nil, err
 			}
 			ctxOpts.Context = ctxResource.Context
 		}
 	}
 
-	if okteto.IsOkteto() && ctxOpts.Namespace != "" {
-		create, err := utils.ShouldCreateNamespace(ctx, ctxOpts.Namespace)
+	oktetoContext, err := contextCMD.NewContextCommand().RunStateless(ctx, ctxOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if oktetoContext.IsOkteto() && ctxOpts.Namespace != "" {
+		ocfg := defaultOktetoClientCfg(oktetoContext)
+		c, err := okteto.NewOktetoClientStateless(ocfg)
 		if err != nil {
-			return err
+			return nil, err
+		}
+
+		create, err := utils.ShouldCreateNamespaceStateless(ctx, ctxOpts.Namespace, c)
+		if err != nil {
+			return nil, err
 		}
 		if create {
-			nsCmd, err := namespace.NewCommand()
-			if err != nil {
-				return err
-			}
-			if err := nsCmd.Create(ctx, &namespace.CreateOptions{Namespace: ctxOpts.Namespace}); err != nil {
-				return err
+			if err := namespace.NewCommandStateless(c).Create(ctx, &namespace.CreateOptions{Namespace: ctxOpts.Namespace}); err != nil {
+				return nil, err
 			}
 		}
 	}
 
-	return contextCMD.NewContextCommand().Run(ctx, ctxOpts)
+	return oktetoContext, err
+}
+
+type oktetoClientCfgContext interface {
+	ExistsContext() bool
+	GetCurrentName() string
+	GetCurrentToken() string
+	GetCurrentCertStr() string
+}
+
+func defaultOktetoClientCfg(octx oktetoClientCfgContext) *okteto.ClientCfg {
+	if !octx.ExistsContext() {
+		return &okteto.ClientCfg{}
+	}
+
+	return &okteto.ClientCfg{
+		CtxName: octx.GetCurrentName(),
+		Token:   octx.GetCurrentToken(),
+		Cert:    octx.GetCurrentCertStr(),
+	}
+
 }

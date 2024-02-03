@@ -20,10 +20,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/constants"
+	"github.com/okteto/okteto/pkg/deps"
 	"github.com/okteto/okteto/pkg/discovery"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
+	"github.com/okteto/okteto/pkg/externalresource"
 	"github.com/okteto/okteto/pkg/model/forward"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apiv1 "k8s.io/api/core/v1"
@@ -32,10 +37,10 @@ import (
 
 func TestManifestExpandDevEnvs(t *testing.T) {
 	tests := []struct {
-		name             string
-		envs             map[string]string
 		manifest         *Manifest
 		expectedManifest *Manifest
+		envs             map[string]string
+		name             string
 	}{
 		{
 			name: "autocreate without image but build section defined",
@@ -43,8 +48,8 @@ func TestManifestExpandDevEnvs(t *testing.T) {
 				"OKTETO_BUILD_TEST_IMAGE": "test",
 			},
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"test": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"test": &Dev{
@@ -53,13 +58,13 @@ func TestManifestExpandDevEnvs(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"test": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"test": &Dev{
 						Autocreate: true,
-						Image: &BuildInfo{
+						Image: &build.Info{
 							Name: "test",
 						},
 					},
@@ -79,26 +84,26 @@ func TestManifestExpandDevEnvs(t *testing.T) {
 				"myImage": "test-2",
 			},
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"test": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"test": &Dev{
 						Autocreate: true,
-						Image: &BuildInfo{
+						Image: &build.Info{
 							Name: "${myImage}",
 						},
 					},
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"test": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"test": &Dev{
 						Autocreate: true,
-						Image: &BuildInfo{
+						Image: &build.Info{
 							Name: "test-2",
 						},
 					},
@@ -114,7 +119,7 @@ func TestManifestExpandDevEnvs(t *testing.T) {
 				Dev: ManifestDevs{
 					"test": &Dev{
 						Autocreate: true,
-						Image: &BuildInfo{
+						Image: &build.Info{
 							Name: "${build}",
 						},
 					},
@@ -124,7 +129,7 @@ func TestManifestExpandDevEnvs(t *testing.T) {
 				Dev: ManifestDevs{
 					"test": &Dev{
 						Autocreate: true,
-						Image: &BuildInfo{
+						Image: &build.Info{
 							Name: "test",
 						},
 					},
@@ -200,11 +205,11 @@ echo $TEST_VAR`,
 }
 func TestManifestExpandEnvs(t *testing.T) {
 	tests := []struct {
-		name            string
 		envs            map[string]string
+		name            string
+		expectedCommand string
 		manifest        []byte
 		expectedErr     bool
-		expectedCommand string
 	}{
 		{
 			name: "expand envs on command",
@@ -258,9 +263,9 @@ devs:
 
 func Test_validateDivert(t *testing.T) {
 	tests := []struct {
+		expectedErr error
 		name        string
 		divert      DivertDeploy
-		expectedErr error
 	}{
 		{
 			name: "divert-ok-with-port",
@@ -332,68 +337,77 @@ func Test_validateDivert(t *testing.T) {
 
 func Test_validateManifestBuild(t *testing.T) {
 	tests := []struct {
+		buildSection build.ManifestBuild
 		name         string
-		buildSection ManifestBuild
 		expectedErr  bool
 	}{
 		{
+			name: "nil build section",
+			buildSection: build.ManifestBuild{
+				"a": &build.Info{},
+				"b": nil,
+				"c": &build.Info{},
+			},
+			expectedErr: true,
+		},
+		{
 			name: "no cycle - no connections",
-			buildSection: ManifestBuild{
-				"a": &BuildInfo{},
-				"b": &BuildInfo{},
-				"c": &BuildInfo{},
+			buildSection: build.ManifestBuild{
+				"a": &build.Info{},
+				"b": &build.Info{},
+				"c": &build.Info{},
 			},
 			expectedErr: false,
 		},
 		{
 			name: "no cycle - connections",
-			buildSection: ManifestBuild{
-				"a": &BuildInfo{
+			buildSection: build.ManifestBuild{
+				"a": &build.Info{
 					DependsOn: []string{"b"},
 				},
-				"b": &BuildInfo{
+				"b": &build.Info{
 					DependsOn: []string{"c"},
 				},
-				"c": &BuildInfo{},
+				"c": &build.Info{},
 			},
 			expectedErr: false,
 		},
 		{
 			name: "cycle - same node dependency",
-			buildSection: ManifestBuild{
-				"a": &BuildInfo{
+			buildSection: build.ManifestBuild{
+				"a": &build.Info{
 					DependsOn: []string{"a"},
 				},
-				"b": &BuildInfo{
+				"b": &build.Info{
 					DependsOn: []string{},
 				},
-				"c": &BuildInfo{},
+				"c": &build.Info{},
 			},
 			expectedErr: true,
 		},
 		{
 			name: "cycle - direct cycle",
-			buildSection: ManifestBuild{
-				"a": &BuildInfo{
+			buildSection: build.ManifestBuild{
+				"a": &build.Info{
 					DependsOn: []string{"b"},
 				},
-				"b": &BuildInfo{
+				"b": &build.Info{
 					DependsOn: []string{"a"},
 				},
-				"c": &BuildInfo{},
+				"c": &build.Info{},
 			},
 			expectedErr: true,
 		},
 		{
 			name: "cycle - indirect cycle",
-			buildSection: ManifestBuild{
-				"a": &BuildInfo{
+			buildSection: build.ManifestBuild{
+				"a": &build.Info{
 					DependsOn: []string{"b"},
 				},
-				"b": &BuildInfo{
+				"b": &build.Info{
 					DependsOn: []string{"c"},
 				},
-				"c": &BuildInfo{
+				"c": &build.Info{
 					DependsOn: []string{"a"},
 				},
 			},
@@ -417,7 +431,7 @@ func TestInferFromStack(t *testing.T) {
 	stack := &Stack{
 		Services: map[string]*Service{
 			"test": {
-				Build: &BuildInfo{
+				Build: &build.Info{
 					Name:       "",
 					Context:    "test",
 					Dockerfile: "Dockerfile",
@@ -432,22 +446,22 @@ func TestInferFromStack(t *testing.T) {
 		},
 	}
 	tests := []struct {
-		name             string
 		currentManifest  *Manifest
 		expectedManifest *Manifest
+		name             string
 	}{
 		{
 			name: "infer from stack empty dev",
 			currentManifest: &Manifest{
 				Dev:   ManifestDevs{},
-				Build: ManifestBuild{},
+				Build: build.ManifestBuild{},
 				Deploy: &DeployInfo{
 					Image: constants.OktetoPipelineRunnerImage,
 					ComposeSection: &ComposeSectionInfo{
 						Stack: &Stack{
 							Services: map[string]*Service{
 								"test": {
-									Build: &BuildInfo{
+									Build: &build.Info{
 										Name:       "test",
 										Context:    filepath.Join(dirtest, "test"),
 										Dockerfile: filepath.Join(filepath.Join(dirtest, "test"), "Dockerfile"),
@@ -465,8 +479,8 @@ func TestInferFromStack(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{
+				Build: build.ManifestBuild{
+					"test": &build.Info{
 						Context:    "test",
 						Dockerfile: "Dockerfile",
 					},
@@ -485,8 +499,8 @@ func TestInferFromStack(t *testing.T) {
 			name: "infer from stack not overriding build",
 			currentManifest: &Manifest{
 				Dev: ManifestDevs{},
-				Build: ManifestBuild{
-					"test": &BuildInfo{
+				Build: build.ManifestBuild{
+					"test": &build.Info{
 						Context:    "test-1",
 						Dockerfile: filepath.Join("test-1", "Dockerfile"),
 					},
@@ -497,7 +511,7 @@ func TestInferFromStack(t *testing.T) {
 						Stack: &Stack{
 							Services: map[string]*Service{
 								"test": {
-									Build: &BuildInfo{
+									Build: &build.Info{
 										Name:       "test",
 										Context:    filepath.Join(dirtest, "test"),
 										Dockerfile: filepath.Join(filepath.Join(dirtest, "test"), "Dockerfile"),
@@ -515,8 +529,8 @@ func TestInferFromStack(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{
+				Build: build.ManifestBuild{
+					"test": &build.Info{
 						Context:    "test-1",
 						Dockerfile: filepath.Join("test-1", "Dockerfile"),
 					},
@@ -529,7 +543,7 @@ func TestInferFromStack(t *testing.T) {
 						Stack: &Stack{
 							Services: map[string]*Service{
 								"test": {
-									Build: &BuildInfo{
+									Build: &build.Info{
 										Name:       "test",
 										Context:    "test",
 										Dockerfile: "Dockerfile",
@@ -556,13 +570,13 @@ func TestInferFromStack(t *testing.T) {
 						Namespace: "test",
 					},
 				},
-				Build: ManifestBuild{},
+				Build: build.ManifestBuild{},
 				Deploy: &DeployInfo{
 					ComposeSection: &ComposeSectionInfo{
 						Stack: &Stack{
 							Services: map[string]*Service{
 								"test": {
-									Build: &BuildInfo{
+									Build: &build.Info{
 										Name:       "test",
 										Context:    "test",
 										Dockerfile: "Dockerfile",
@@ -580,8 +594,8 @@ func TestInferFromStack(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"test": &BuildInfo{
+				Build: build.ManifestBuild{
+					"test": &build.Info{
 						Context:    "test",
 						Dockerfile: "Dockerfile",
 					},
@@ -597,11 +611,11 @@ func TestInferFromStack(t *testing.T) {
 						},
 						Selector:   Selector{},
 						EmptyImage: true,
-						Image: &BuildInfo{
+						Image: &build.Info{
 							Context:    ".",
 							Dockerfile: "Dockerfile",
 						},
-						Push: &BuildInfo{
+						Push: &build.Info{
 							Context:    ".",
 							Dockerfile: "Dockerfile",
 						},
@@ -634,7 +648,7 @@ func TestInferFromStack(t *testing.T) {
 								},
 							},
 						},
-						Mode: "sync",
+						Mode: constants.OktetoSyncModeFieldValue,
 					},
 				},
 				Deploy: &DeployInfo{
@@ -732,86 +746,47 @@ func TestSetManifestDefaultsFromDev(t *testing.T) {
 	}
 }
 
-func TestHasDependencies(t *testing.T) {
-	tests := []struct {
-		name     string
-		manifest Manifest
-		expected bool
-	}{
-		{
-			name: "nil dependencies",
-			manifest: Manifest{
-				Dependencies: nil,
-			},
-			expected: false,
-		},
-		{
-			name: "empty dependencies",
-			manifest: Manifest{
-				Dependencies: make(ManifestDependencies, 0),
-			},
-			expected: false,
-		},
-		{
-			name: "has dependencies",
-			manifest: Manifest{
-				Dependencies: ManifestDependencies{
-					"test": &Dependency{},
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tt.manifest.HasDependencies())
-		})
-	}
-}
-
 func TestSetBuildDefaults(t *testing.T) {
-
 	tests := []struct {
-		name              string
-		currentBuildInfo  BuildInfo
-		expectedBuildInfo BuildInfo
+		name         string
+		currentInfo  build.Info
+		expectedInfo build.Info
 	}{
 		{
-			name:             "all empty",
-			currentBuildInfo: BuildInfo{},
-			expectedBuildInfo: BuildInfo{
+			name:        "all empty",
+			currentInfo: build.Info{},
+			expectedInfo: build.Info{
 				Context:    ".",
 				Dockerfile: "Dockerfile",
 			},
 		},
 		{
 			name: "context empty",
-			currentBuildInfo: BuildInfo{
+			currentInfo: build.Info{
 				Dockerfile: "Dockerfile",
 			},
-			expectedBuildInfo: BuildInfo{
+			expectedInfo: build.Info{
 				Context:    ".",
 				Dockerfile: "Dockerfile",
 			},
 		},
 		{
 			name: "dockerfile empty",
-			currentBuildInfo: BuildInfo{
+			currentInfo: build.Info{
 				Context: "buildName",
 			},
-			expectedBuildInfo: BuildInfo{
+			expectedInfo: build.Info{
 				Context:    "buildName",
 				Dockerfile: "Dockerfile",
 			},
 		},
 		{
 			name: "context and Dockerfile filled",
-			currentBuildInfo: BuildInfo{
+			currentInfo: build.Info{
 				Context:    "buildName",
 				Dockerfile: "Dockerfile",
 			},
-			expectedBuildInfo: BuildInfo{
+			expectedInfo: build.Info{
 				Context:    "buildName",
 				Dockerfile: "Dockerfile",
 			},
@@ -822,19 +797,19 @@ func TestSetBuildDefaults(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 
-			tt.currentBuildInfo.setBuildDefaults()
+			tt.currentInfo.SetBuildDefaults()
 
-			assert.Equal(t, tt.expectedBuildInfo, tt.currentBuildInfo)
+			assert.Equal(t, tt.expectedInfo, tt.currentInfo)
 		})
 	}
 }
 
 func Test_getManifestFromFile(t *testing.T) {
 	tests := []struct {
+		expectedErr   error
 		name          string
 		manifestBytes []byte
 		composeBytes  []byte
-		expectedErr   error
 	}{
 		{
 			name:          "manifestPath to a valid compose file",
@@ -941,16 +916,16 @@ func TestHasDev(t *testing.T) {
 
 func Test_SanitizeSvcNames(t *testing.T) {
 	tests := []struct {
-		name             string
+		expectedErr      error
 		manifest         *Manifest
 		expectedManifest *Manifest
-		expectedErr      error
+		name             string
 	}{
 		{
 			name: "keys-have-uppercase",
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					"Frontend": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"Frontend": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"Frontend": &Dev{},
@@ -962,8 +937,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"frontend": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"frontend": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"frontend": &Dev{
@@ -980,8 +955,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 		{
 			name: "keys-have-spaces",
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					" my build service": &BuildInfo{},
+				Build: build.ManifestBuild{
+					" my build service": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my dev service": &Dev{},
@@ -993,8 +968,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"my-build-service": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"my-build-service": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my-dev-service": &Dev{
@@ -1011,8 +986,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 		{
 			name: "keys-have-underscore",
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					"my_build_service": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"my_build_service": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my_dev_service": &Dev{},
@@ -1024,8 +999,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"my-build-service": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"my-build-service": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my-dev-service": &Dev{
@@ -1042,8 +1017,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 		{
 			name: "keys-have-mix",
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					"  my_Build service": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"  my_Build service": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my_DEV_service ": &Dev{},
@@ -1055,8 +1030,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"my-build-service": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"my-build-service": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my-dev-service": &Dev{
@@ -1073,8 +1048,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 		{
 			name: "keys-have-trailing-spaces",
 			manifest: &Manifest{
-				Build: ManifestBuild{
-					"  my-build ": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"  my-build ": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					" my-dev  ": &Dev{},
@@ -1086,8 +1061,8 @@ func Test_SanitizeSvcNames(t *testing.T) {
 				},
 			},
 			expectedManifest: &Manifest{
-				Build: ManifestBuild{
-					"my-build": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"my-build": &build.Info{},
 				},
 				Dev: ManifestDevs{
 					"my-dev": &Dev{
@@ -1112,93 +1087,10 @@ func Test_SanitizeSvcNames(t *testing.T) {
 	}
 }
 
-func Test_GetTimeout(t *testing.T) {
-	tests := []struct {
-		name           string
-		defaultTimeout time.Duration
-		dependency     *Dependency
-		expected       time.Duration
-	}{
-		{
-			name:           "default timeout set and specific not",
-			defaultTimeout: 5 * time.Minute,
-			dependency:     &Dependency{},
-			expected:       5 * time.Minute,
-		},
-		{
-			name: "default timeout unset and specific set",
-			dependency: &Dependency{
-				Timeout: 10 * time.Minute,
-			},
-			expected: 10 * time.Minute,
-		},
-		{
-			name:       "both unset",
-			dependency: &Dependency{},
-			expected:   0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.dependency.GetTimeout(tt.defaultTimeout)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func Test_ExpandVars(t *testing.T) {
-	t.Setenv("MY_CUSTOM_VAR_FROM_ENVIRON", "varValueFromEnv")
-	dependency := Dependency{
-		Repository:   "${REPO}",
-		Branch:       "${NOBRANCHSET-$BRANCH}",
-		ManifestPath: "${NOMPATHSET=$MPATH}",
-		Namespace:    "${FOO+$SOME_NS_DEP_EXP}",
-		Variables: Environment{
-			EnvVar{
-				Name:  "MYVAR",
-				Value: "${AVARVALUE}",
-			},
-			EnvVar{
-				Name:  "$${ANAME}",
-				Value: "${MY_CUSTOM_VAR_FROM_ENVIRON}",
-			},
-		},
-	}
-	expected := Dependency{
-		Repository:   "my/repo",
-		Branch:       "myBranch",
-		ManifestPath: "api/okteto.yml",
-		Namespace:    "oktetoNs",
-		Variables: Environment{
-			EnvVar{
-				Name:  "MYVAR",
-				Value: "thisIsAValue",
-			},
-			EnvVar{
-				Name:  "${ANAME}",
-				Value: "varValueFromEnv",
-			},
-		},
-	}
-	envVariables := []string{
-		"FOO=BAR",
-		"REPO=my/repo",
-		"BRANCH=myBranch",
-		"MPATH=api/okteto.yml",
-		"SOME_NS_DEP_EXP=oktetoNs",
-		"AVARVALUE=thisIsAValue",
-	}
-
-	err := dependency.ExpandVars(envVariables)
-	require.NoError(t, err)
-	assert.Equal(t, expected, dependency)
-}
-
 func Test_Manifest_HasDeploySection(t *testing.T) {
 	tests := []struct {
-		name     string
 		manifest *Manifest
+		name     string
 		expected bool
 	}{
 		{
@@ -1298,8 +1190,8 @@ func Test_Manifest_HasDeploySection(t *testing.T) {
 
 func Test_Manifest_HasDependenciesSection(t *testing.T) {
 	tests := []struct {
-		name     string
 		manifest *Manifest
+		name     string
 		expected bool
 	}{
 		{
@@ -1322,8 +1214,8 @@ func Test_Manifest_HasDependenciesSection(t *testing.T) {
 			name: "m.IsV2 && m.Dependencies has items",
 			manifest: &Manifest{
 				IsV2: true,
-				Dependencies: ManifestDependencies{
-					"test": &Dependency{},
+				Dependencies: deps.ManifestSection{
+					"test": &deps.Dependency{},
 				},
 			},
 			expected: true,
@@ -1341,8 +1233,8 @@ func Test_Manifest_HasDependenciesSection(t *testing.T) {
 
 func Test_Manifest_HasBuildSection(t *testing.T) {
 	tests := []struct {
-		name     string
 		manifest *Manifest
+		name     string
 		expected bool
 	}{
 		{
@@ -1365,8 +1257,8 @@ func Test_Manifest_HasBuildSection(t *testing.T) {
 			name: "m.IsV2 && m.Build has items",
 			manifest: &Manifest{
 				IsV2: true,
-				Build: ManifestBuild{
-					"test": &BuildInfo{},
+				Build: build.ManifestBuild{
+					"test": &build.Info{},
 				},
 			},
 			expected: true,
@@ -1415,8 +1307,8 @@ func Test_getInferredManifestFromK8sManifestFolder(t *testing.T) {
 func Test_getInferredManifestFromHelmPath(t *testing.T) {
 	var tests = []struct {
 		name          string
-		filesToCreate []string
 		expected      string
+		filesToCreate []string
 	}{
 		{
 			name:          "chart folder exists on wd",
@@ -1455,4 +1347,340 @@ func Test_getInferredManifestWhenNoManifestExist(t *testing.T) {
 	result, err := GetInferredManifest(wd)
 	assert.Empty(t, result)
 	assert.ErrorIs(t, err, oktetoErrors.ErrCouldNotInferAnyManifest)
+}
+
+func TestSecretValidate(t *testing.T) {
+	file, err := os.CreateTemp("", "okteto-secret-test-validate")
+	assert.NoError(t, err)
+	defer os.Remove(file.Name())
+
+	tmpDir := t.TempDir()
+	defer os.Remove(tmpDir)
+
+	var tests = []struct {
+		s           *Secret
+		expectedErr error
+		name        string
+	}{
+		{
+			name:        "missing local path",
+			s:           &Secret{LocalPath: "", RemotePath: "test"},
+			expectedErr: fmt.Errorf("secrets must follow the syntax 'LOCAL_PATH:REMOTE_PATH:MODE'"),
+		},
+		{
+			name:        "missing remote path",
+			s:           &Secret{LocalPath: "test", RemotePath: ""},
+			expectedErr: fmt.Errorf("secrets must follow the syntax 'LOCAL_PATH:REMOTE_PATH:MODE'"),
+		},
+		{
+			name:        "missing both",
+			s:           &Secret{LocalPath: "", RemotePath: ""},
+			expectedErr: fmt.Errorf("secrets must follow the syntax 'LOCAL_PATH:REMOTE_PATH:MODE'"),
+		},
+		{
+			name:        "local path must be file not directory",
+			s:           &Secret{LocalPath: tmpDir, RemotePath: "./remote"},
+			expectedErr: fmt.Errorf("secret '%s' is not a regular file", tmpDir),
+		},
+		{
+			name:        "remote path must use absolute paths",
+			s:           &Secret{LocalPath: file.Name(), RemotePath: "./remote"},
+			expectedErr: fmt.Errorf("secret remote path './remote' must be an absolute path"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.s.validate()
+			assert.Equal(t, tt.expectedErr, err)
+		})
+	}
+}
+
+func TestRead(t *testing.T) {
+	tests := []struct {
+		expected    *Manifest
+		name        string
+		manifest    []byte
+		expectedErr bool
+	}{
+		{
+			name:     "nil bytes return valid initialized v1 manifest",
+			manifest: nil,
+			expected: &Manifest{
+				Name:         "",
+				Namespace:    "",
+				Context:      "",
+				Icon:         "",
+				ManifestPath: "",
+				Deploy: &DeployInfo{
+					Endpoints: nil,
+					Image:     "",
+					Commands:  nil,
+					Remote:    false,
+				},
+				Dev: ManifestDevs{},
+				Destroy: &DestroyInfo{
+					Image:    "",
+					Commands: nil,
+					Remote:   false,
+				},
+				Build:         build.ManifestBuild{},
+				Dependencies:  deps.ManifestSection{},
+				GlobalForward: []forward.GlobalForward{},
+				External:      externalresource.Section{},
+				Type:          OktetoManifestType,
+				Manifest:      nil,
+				IsV2:          false,
+			},
+		},
+		{
+			name:     "empty bytes return valid initialized v1 manifest",
+			manifest: []byte(""),
+			expected: &Manifest{
+				Name:         "",
+				Namespace:    "",
+				Context:      "",
+				Icon:         "",
+				ManifestPath: "",
+				Deploy: &DeployInfo{
+					Endpoints: nil,
+					Image:     "",
+					Commands:  nil,
+					Remote:    false,
+				},
+				Dev: ManifestDevs{},
+				Destroy: &DestroyInfo{
+					Image:    "",
+					Commands: nil,
+					Remote:   false,
+				},
+				Build:         build.ManifestBuild{},
+				Dependencies:  deps.ManifestSection{},
+				GlobalForward: []forward.GlobalForward{},
+				External:      externalresource.Section{},
+				Type:          OktetoManifestType,
+				Manifest:      []uint8{},
+				IsV2:          false,
+			},
+		},
+		{
+			name:        "invalid YAML format",
+			manifest:    []byte("{invalid yaml}"),
+			expected:    nil,
+			expectedErr: true,
+		},
+		{
+			name: "failed validation due to cyclic dependencies",
+			manifest: []byte(`build:
+  test1:
+    context: ./test1
+    depends_on: test2
+  test2:
+    context: ./test2
+    depends_on: test2`),
+			expected:    nil,
+			expectedErr: true,
+		},
+		{
+			name: "success parsing dev",
+			manifest: []byte(`dev:
+  test:
+    image: test-image
+    context: ./test`),
+			expected: &Manifest{
+				Name:         "",
+				Namespace:    "",
+				Context:      "",
+				Icon:         "",
+				ManifestPath: "",
+				Deploy:       nil,
+				Dev: ManifestDevs{
+					"test": &Dev{
+						Name:      "test",
+						Context:   "./test",
+						Namespace: "",
+						Metadata: &Metadata{
+							Labels:      Labels{},
+							Annotations: Annotations{},
+						},
+						Selector:   Selector{},
+						EmptyImage: false,
+						Image: &build.Info{
+							Name:       "test-image",
+							Context:    ".",
+							Dockerfile: "Dockerfile",
+						},
+						Push: &build.Info{
+							Context:    ".",
+							Dockerfile: "Dockerfile",
+						},
+						ImagePullPolicy: apiv1.PullAlways,
+						InitContainer:   InitContainer{Image: OktetoBinImageTag},
+						Probes:          &Probes{},
+						Lifecycle:       &Lifecycle{},
+						Workdir:         "/okteto",
+						SecurityContext: &SecurityContext{
+							RunAsUser:  pointer.Int64(0),
+							RunAsGroup: pointer.Int64(0),
+							FSGroup:    pointer.Int64(0),
+						},
+						SSHServerPort: 2222,
+						Volumes:       []Volume{},
+						Timeout: Timeout{
+							Default:   60 * time.Second,
+							Resources: 120 * time.Second,
+						},
+						Command: Command{
+							Values: []string{"sh"},
+						},
+						Interface: Localhost,
+						Sync: Sync{
+							RescanInterval: 300,
+							Folders: []SyncFolder{
+								{
+									LocalPath:  ".",
+									RemotePath: "/okteto",
+								},
+							},
+						},
+						PersistentVolumeInfo: &PersistentVolumeInfo{
+							Enabled: true,
+						},
+						Mode:        constants.OktetoSyncModeFieldValue,
+						Services:    []*Dev{},
+						Forward:     []forward.Forward{},
+						Environment: env.Environment{},
+						Secrets:     []Secret{},
+					},
+				},
+				Destroy: &DestroyInfo{
+					Image:    "",
+					Commands: nil,
+					Remote:   false,
+				},
+				Build:         build.ManifestBuild{},
+				Dependencies:  deps.ManifestSection{},
+				GlobalForward: nil,
+				External:      externalresource.Section{},
+				Type:          OktetoManifestType,
+				Manifest: []byte(`dev:
+  test:
+    image: test-image
+    context: ./test`),
+				IsV2: true,
+			},
+			expectedErr: false,
+		},
+		{
+			name: "empty build service returns an error",
+			manifest: []byte(`build:
+  frontend:
+  backend:
+    context: ./backend`),
+			expected:    nil,
+			expectedErr: true,
+		},
+		{
+			// Because we call setDefaults before validate, this test case helps remember that the order in which
+			// We call setDefaults before calling validate must be respected or a refactor is required. If we call
+			// validate before setDefaults, this test case fails with an error because driver is empty.
+			name: "success - divert driver set before validation",
+			manifest: []byte(`deploy:
+  divert:
+    namespace: staging
+    service: service-b`),
+			expected: &Manifest{
+				Name:         "",
+				Namespace:    "",
+				Context:      "",
+				Icon:         "",
+				ManifestPath: "",
+				Deploy: &DeployInfo{
+					ComposeSection: nil,
+					Endpoints:      nil,
+					Divert: &DivertDeploy{
+						Driver:               "weaver",
+						Namespace:            "staging",
+						DeprecatedService:    "service-b",
+						DeprecatedDeployment: "",
+						VirtualServices:      nil,
+						Hosts:                nil,
+						DeprecatedPort:       0,
+					},
+					Image:    "",
+					Commands: nil,
+					Remote:   false,
+				},
+				Dev: ManifestDevs{},
+				Destroy: &DestroyInfo{
+					Image:    "",
+					Commands: nil,
+					Remote:   false,
+				},
+				Build:         build.ManifestBuild{},
+				Dependencies:  deps.ManifestSection{},
+				GlobalForward: nil,
+				External:      externalresource.Section{},
+				Type:          OktetoManifestType,
+				IsV2:          true,
+				Manifest: []byte(`deploy:
+  divert:
+    namespace: staging
+    service: service-b`),
+			},
+			expectedErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest, err := Read(tt.manifest)
+			if tt.expectedErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.expected, manifest)
+		})
+	}
+}
+
+func TestPathExistsAndDir(t *testing.T) {
+	fs := afero.NewOsFs()
+	path, err := afero.TempDir(fs, "", "")
+	require.NoError(t, err)
+	require.Equal(t, pathExistsAndDir(path), true)
+}
+
+func TestPathExistsAndDirError(t *testing.T) {
+	tests := []struct {
+		name       string
+		createFile bool
+		expected   bool
+	}{
+		{
+			name:       "error: path doesn't exits",
+			createFile: false,
+			expected:   false,
+		},
+		{
+			name:       "error: path is not a dir",
+			createFile: true,
+			expected:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var path string
+			if tt.createFile {
+				fs := afero.NewMemMapFs()
+				file, err := afero.TempFile(fs, "", "")
+				require.NoError(t, err)
+				path = file.Name()
+			}
+			require.Equal(t, pathExistsAndDir(path), tt.expected)
+
+		})
+	}
 }

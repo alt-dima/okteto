@@ -27,21 +27,20 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/okteto/okteto/pkg/config"
-
 	"github.com/mitchellh/go-homedir"
 	builder "github.com/okteto/okteto/cmd/build"
-
 	remoteBuild "github.com/okteto/okteto/cmd/build/remote"
+	"github.com/okteto/okteto/pkg/build"
+	buildCmd "github.com/okteto/okteto/pkg/cmd/build"
+	"github.com/okteto/okteto/pkg/config"
+	"github.com/okteto/okteto/pkg/constants"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/filesystem"
-	"github.com/okteto/okteto/pkg/remote"
-
-	"github.com/okteto/okteto/pkg/cmd/build"
-	"github.com/okteto/okteto/pkg/constants"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
+	"github.com/okteto/okteto/pkg/remote"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/spf13/afero"
 )
@@ -72,6 +71,7 @@ COPY . /okteto/src
 WORKDIR /okteto/src
 
 ARG {{ .GitCommitArgName }}
+ARG {{ .GitBranchArgName }}
 ARG {{ .InvalidateCacheArgName }}
 
 RUN okteto registrytoken install --force --log-output=json
@@ -93,6 +93,7 @@ type dockerfileTemplateProperties struct {
 	InternalServerName     string
 	ActionNameArgName      string
 	GitCommitArgName       string
+	GitBranchArgName       string
 	InvalidateCacheArgName string
 	DestroyFlags           string
 }
@@ -114,9 +115,9 @@ type remoteDestroyCommand struct {
 	knownHostsPath string
 }
 
-func newRemoteDestroyer(manifest *model.Manifest) *remoteDestroyCommand {
+func newRemoteDestroyer(manifest *model.Manifest, ioCtrl *io.Controller) *remoteDestroyCommand {
 	fs := afero.NewOsFs()
-	builder := remoteBuild.NewBuilderFromScratch()
+	builder := remoteBuild.NewBuilderFromScratch(ioCtrl)
 	if manifest.Destroy == nil {
 		manifest.Destroy = &model.DestroyInfo{}
 	}
@@ -168,7 +169,7 @@ func (rd *remoteDestroyCommand) destroy(ctx context.Context, opts *Options) erro
 		}
 	}()
 
-	buildInfo := &model.BuildInfo{
+	buildInfo := &build.Info{
 		Dockerfile: dockerfile,
 	}
 
@@ -182,31 +183,30 @@ func (rd *remoteDestroyCommand) destroy(ctx context.Context, opts *Options) erro
 		return err
 	}
 
-	buildOptions := build.OptsFromBuildInfoForRemoteDeploy(buildInfo, &types.BuildOptions{Path: cwd, OutputMode: "destroy"})
+	buildOptions := buildCmd.OptsFromBuildInfoForRemoteDeploy(buildInfo, &types.BuildOptions{Path: cwd, OutputMode: "destroy"})
 	buildOptions.Manifest = rd.manifest
 	buildOptions.BuildArgs = append(
 		buildOptions.BuildArgs,
-		fmt.Sprintf("%s=%s", model.OktetoContextEnvVar, okteto.Context().Name),
-		fmt.Sprintf("%s=%s", model.OktetoNamespaceEnvVar, okteto.Context().Namespace),
-		fmt.Sprintf("%s=%s", model.OktetoTokenEnvVar, okteto.Context().Token),
+		fmt.Sprintf("%s=%s", model.OktetoContextEnvVar, okteto.GetContext().Name),
+		fmt.Sprintf("%s=%s", model.OktetoNamespaceEnvVar, okteto.GetContext().Namespace),
+		fmt.Sprintf("%s=%s", model.OktetoTokenEnvVar, okteto.GetContext().Token),
 		fmt.Sprintf("%s=%s", constants.OktetoTlsCertBase64EnvVar, base64.StdEncoding.EncodeToString(sc.Certificate)),
 		fmt.Sprintf("%s=%s", constants.OktetoInternalServerNameEnvVar, sc.ServerName),
 		fmt.Sprintf("%s=%s", model.OktetoActionNameEnvVar, os.Getenv(model.OktetoActionNameEnvVar)),
 		fmt.Sprintf("%s=%s", constants.OktetoGitCommitEnvVar, os.Getenv(constants.OktetoGitCommitEnvVar)),
+		fmt.Sprintf("%s=%s", constants.OktetoGitBranchEnvVar, os.Getenv(constants.OktetoGitBranchEnvVar)),
 		fmt.Sprintf("%s=%d", constants.OktetoInvalidateCacheEnvVar, int(randomNumber.Int64())),
 	)
 
 	if sc.ServerName != "" {
-		registryUrl := okteto.Context().Registry
+		registryUrl := okteto.GetContext().Registry
 		subdomain := strings.TrimPrefix(registryUrl, "registry.")
 		ip, _, err := net.SplitHostPort(sc.ServerName)
 		if err != nil {
 			return fmt.Errorf("failed to parse server name network address: %w", err)
 		}
-		buildOptions.ExtraHosts = []types.HostMap{
-			{Hostname: registryUrl, IP: ip},
-			{Hostname: fmt.Sprintf("kubernetes.%s", subdomain), IP: ip},
-		}
+
+		buildOptions.ExtraHosts = getExtraHosts(registryUrl, subdomain, ip, *sc)
 	}
 
 	sshSock := os.Getenv(rd.sshAuthSockEnvvar)
@@ -243,7 +243,7 @@ func (rd *remoteDestroyCommand) destroy(ctx context.Context, opts *Options) erro
 	// account that we must not confuse the user with build messages since this logic is
 	// executed in the deploy command.
 	if err := rd.builder.Build(ctx, buildOptions); err != nil {
-		var cmdErr build.OktetoCommandErr
+		var cmdErr buildCmd.OktetoCommandErr
 		if errors.As(err, &cmdErr) {
 			oktetoLog.SetStage(cmdErr.Stage)
 			return oktetoErrors.UserError{
@@ -283,6 +283,7 @@ func (rd *remoteDestroyCommand) createDockerfile(tempDir string, opts *Options) 
 		InternalServerName:     constants.OktetoInternalServerNameEnvVar,
 		ActionNameArgName:      model.OktetoActionNameEnvVar,
 		GitCommitArgName:       constants.OktetoGitCommitEnvVar,
+		GitBranchArgName:       constants.OktetoGitBranchEnvVar,
 		InvalidateCacheArgName: constants.OktetoInvalidateCacheEnvVar,
 		DestroyFlags:           strings.Join(getDestroyFlags(opts), " "),
 	}
@@ -301,6 +302,23 @@ func (rd *remoteDestroyCommand) createDockerfile(tempDir string, opts *Options) 
 	}
 	return dockerfile.Name(), nil
 
+}
+
+func getExtraHosts(registryURL, subdomain, ip string, metadata types.ClusterMetadata) []types.HostMap {
+	extraHosts := []types.HostMap{
+		{Hostname: registryURL, IP: ip},
+		{Hostname: fmt.Sprintf("kubernetes.%s", subdomain), IP: ip},
+	}
+
+	if metadata.BuildKitInternalIP != "" {
+		extraHosts = append(extraHosts, types.HostMap{Hostname: fmt.Sprintf("buildkit.%s", subdomain), IP: metadata.BuildKitInternalIP})
+	}
+
+	if metadata.PublicDomain != "" {
+		extraHosts = append(extraHosts, types.HostMap{Hostname: metadata.PublicDomain, IP: ip})
+	}
+
+	return extraHosts
 }
 
 func getDestroyFlags(opts *Options) []string {
@@ -351,17 +369,17 @@ func fetchClusterMetadata(ctx context.Context) (*types.ClusterMetadata, error) {
 	cp := okteto.NewOktetoClientProvider()
 	c, err := cp.Provide()
 	if err != nil {
-		return nil, fmt.Errorf("failed to provide okteto client for fetching certs: %s", err)
+		return nil, fmt.Errorf("failed to provide okteto client for fetching certs: %w", err)
 	}
 	uc := c.User()
 
-	metadata, err := uc.GetClusterMetadata(ctx, okteto.Context().Namespace)
+	metadata, err := uc.GetClusterMetadata(ctx, okteto.GetContext().Namespace)
 	if err != nil {
 		return nil, err
 	}
 
 	if metadata.Certificate == nil {
-		metadata.Certificate, err = uc.GetClusterCertificate(ctx, okteto.Context().Name, okteto.Context().Namespace)
+		metadata.Certificate, err = uc.GetClusterCertificate(ctx, okteto.GetContext().Name, okteto.GetContext().Namespace)
 	}
 
 	return &metadata, err

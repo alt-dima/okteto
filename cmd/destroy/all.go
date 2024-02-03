@@ -1,3 +1,16 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package destroy
 
 import (
@@ -23,7 +36,7 @@ type localDestroyAllCommand struct {
 	ConfigMapHandler  configMapHandler
 	nsDestroyer       destroyer
 	executor          executor.ManifestExecutor
-	oktetoClient      *okteto.OktetoClient
+	oktetoClient      *okteto.Client
 	secrets           secretHandler
 	k8sClientProvider okteto.K8sClientProvider
 }
@@ -32,9 +45,9 @@ func newLocalDestroyerAll(
 	k8sClientProvider okteto.K8sClientProvider,
 	executor executor.ManifestExecutor,
 	nsDestroyer destroyer,
-	oktetoClient *okteto.OktetoClient,
+	oktetoClient *okteto.Client,
 ) (*localDestroyAllCommand, error) {
-	k8sClient, _, err := k8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, _, err := k8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +115,7 @@ func (ld *localDestroyAllCommand) waitForNamespaceDestroyAllToComplete(ctx conte
 	ticker := time.NewTicker(1 * time.Second)
 	to := time.NewTicker(timeout)
 
-	c, _, err := ld.k8sClientProvider.Provide(okteto.Context().Cfg)
+	c, _, err := ld.k8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}

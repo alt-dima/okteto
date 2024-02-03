@@ -28,15 +28,15 @@ import (
 type DeployOptions struct {
 	Workdir          string
 	ManifestPath     string
-	Build            bool
 	LogLevel         string
 	LogOutput        string
-	ServicesToDeploy []string
 	Namespace        string
 	OktetoHome       string
 	Token            string
 	Name             string
 	Variables        string
+	ServicesToDeploy []string
+	Build            bool
 	IsRemote         bool
 }
 
@@ -65,7 +65,10 @@ func GetOktetoDeployCmdOutput(oktetoPath string, deployOptions *DeployOptions) (
 
 // RunOktetoDeploy runs an okteto deploy command
 func RunOktetoDeploy(oktetoPath string, deployOptions *DeployOptions) error {
-	_, err := GetOktetoDeployCmdOutput(oktetoPath, deployOptions)
+	output, err := GetOktetoDeployCmdOutput(oktetoPath, deployOptions)
+	if err != nil {
+		return fmt.Errorf("okteto deploy failed: %s - %w", string(output), err)
+	}
 	return err
 }
 
@@ -75,7 +78,7 @@ func RunOktetoDeployAndGetOutput(oktetoPath string, deployOptions *DeployOptions
 	log.Printf("Running '%s'", cmd.String())
 	o, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(o), fmt.Errorf("okteto deploy failed: %s - %s", string(o), err)
+		return string(o), fmt.Errorf("okteto deploy failed: %s - %w", string(o), err)
 	}
 	log.Printf("okteto deploy success")
 	return string(o), nil
@@ -87,7 +90,7 @@ func RunOktetoDestroy(oktetoPath string, destroyOptions *DestroyOptions) error {
 	cmd := getDestroyCmd(oktetoPath, destroyOptions)
 	o, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("okteto deploy failed: %s - %s", string(o), err)
+		return fmt.Errorf("okteto deploy failed: %s - %w", string(o), err)
 	}
 	log.Printf("okteto destroy success")
 	return nil
@@ -99,7 +102,7 @@ func RunOktetoDestroyAndGetOutput(oktetoPath string, destroyOptions *DestroyOpti
 	log.Printf("Running '%s'", cmd.String())
 	o, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(o), fmt.Errorf("okteto deploy failed: %s - %s", string(o), err)
+		return string(o), fmt.Errorf("okteto deploy failed: %s - %w", string(o), err)
 	}
 	log.Printf("okteto deploy success")
 	return string(o), nil
@@ -113,7 +116,7 @@ func RunOktetoDestroyRemote(oktetoPath string, destroyOptions *DestroyOptions) e
 
 	o, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("okteto deploy --remote failed: %s - %s", string(o), err)
+		return fmt.Errorf("okteto deploy --remote failed: %s - %w", string(o), err)
 	}
 	log.Printf("okteto destroy success")
 	return nil

@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/env"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
@@ -77,7 +79,7 @@ func Test_translateDeployment(t *testing.T) {
 				StopGracePeriod: 20,
 				Entrypoint:      model.Entrypoint{Values: []string{"command1", "command2"}},
 				Command:         model.Command{Values: []string{"args1", "args2"}},
-				Environment: []model.EnvVar{
+				Environment: []env.Var{
 					{
 						Name:  "env1",
 						Value: "value1",
@@ -184,7 +186,7 @@ func Test_translateStatefulSet(t *testing.T) {
 				StopGracePeriod: 20,
 				Entrypoint:      model.Entrypoint{Values: []string{"command1", "command2"}},
 				Command:         model.Command{Values: []string{"args1", "args2"}},
-				Environment: []model.EnvVar{
+				Environment: []env.Var{
 					{
 						Name:  "env1",
 						Value: "value1",
@@ -198,7 +200,7 @@ func Test_translateStatefulSet(t *testing.T) {
 				CapAdd:  []apiv1.Capability{apiv1.Capability("CAP_ADD")},
 				CapDrop: []apiv1.Capability{apiv1.Capability("CAP_DROP")},
 
-				Volumes: []model.StackVolume{{RemotePath: "/volume1"}, {RemotePath: "/volume2"}},
+				Volumes: []build.VolumeMounts{{RemotePath: "/volume1"}, {RemotePath: "/volume2"}},
 				Resources: &model.StackResources{
 					Limits: model.ServiceResources{
 						CPU:    model.Quantity{Value: resource.MustParse("100m")},
@@ -355,7 +357,7 @@ func Test_translateStatefulSet(t *testing.T) {
 				"storage": resource.MustParse("20Gi"),
 			},
 		},
-		StorageClassName: pointer.StringPtr("class-name"),
+		StorageClassName: pointer.String("class-name"),
 	}
 	if !reflect.DeepEqual(vct.Spec, volumeClaimTemplateSpec) {
 		t.Errorf("Wrong statefulset volume claim template: '%v'", vct.Spec)
@@ -385,7 +387,7 @@ func Test_translateJobWithoutVolumes(t *testing.T) {
 				Replicas:        3,
 				Entrypoint:      model.Entrypoint{Values: []string{"command1", "command2"}},
 				Command:         model.Command{Values: []string{"args1", "args2"}},
-				Environment: []model.EnvVar{
+				Environment: []env.Var{
 					{
 						Name:  "env1",
 						Value: "value1",
@@ -523,7 +525,7 @@ func Test_translateJobWithVolumes(t *testing.T) {
 				Replicas:        3,
 				Entrypoint:      model.Entrypoint{Values: []string{"command1", "command2"}},
 				Command:         model.Command{Values: []string{"args1", "args2"}},
-				Environment: []model.EnvVar{
+				Environment: []env.Var{
 					{
 						Name:  "env1",
 						Value: "value1",
@@ -538,7 +540,7 @@ func Test_translateJobWithVolumes(t *testing.T) {
 				CapDrop:       []apiv1.Capability{apiv1.Capability("CAP_DROP")},
 				RestartPolicy: apiv1.RestartPolicyNever,
 				BackOffLimit:  5,
-				Volumes:       []model.StackVolume{{RemotePath: "/volume1"}, {RemotePath: "/volume2"}},
+				Volumes:       []build.VolumeMounts{{RemotePath: "/volume1"}, {RemotePath: "/volume2"}},
 				Resources: &model.StackResources{
 					Limits: model.ServiceResources{
 						CPU:    model.Quantity{Value: resource.MustParse("100m")},
@@ -690,9 +692,9 @@ func Test_translateJobWithVolumes(t *testing.T) {
 func Test_translateService(t *testing.T) {
 
 	var tests = []struct {
-		name     string
 		stack    *model.Stack
 		expected *apiv1.Service
+		name     string
 	}{
 		{
 			name: "translate svc no public endpoints",
@@ -1054,9 +1056,9 @@ func Test_translateService(t *testing.T) {
 
 func Test_translateSvcProbe(t *testing.T) {
 	tests := []struct {
-		name     string
-		svc      *model.Service
 		expected healthcheckProbes
+		svc      *model.Service
+		name     string
 	}{
 		{
 			name: "nil healthcheck",
@@ -1203,15 +1205,15 @@ func Test_translateServiceEnvironment(t *testing.T) {
 		{
 			name: "none",
 			svc: &model.Service{
-				Environment: model.Environment{},
+				Environment: env.Environment{},
 			},
 			expected: []apiv1.EnvVar{},
 		},
 		{
 			name: "empty value",
 			svc: &model.Service{
-				Environment: model.Environment{
-					model.EnvVar{
+				Environment: env.Environment{
+					env.Var{
 						Name: "DEBUG",
 					},
 				},
@@ -1225,8 +1227,8 @@ func Test_translateServiceEnvironment(t *testing.T) {
 		{
 			name: "empty name",
 			svc: &model.Service{
-				Environment: model.Environment{
-					model.EnvVar{
+				Environment: env.Environment{
+					env.Var{
 						Value: "DEBUG",
 					},
 				},
@@ -1236,8 +1238,8 @@ func Test_translateServiceEnvironment(t *testing.T) {
 		{
 			name: "ok env var",
 			svc: &model.Service{
-				Environment: model.Environment{
-					model.EnvVar{
+				Environment: env.Environment{
+					env.Var{
 						Name:  "DEBUG",
 						Value: "true",
 					},
@@ -1264,8 +1266,8 @@ func Test_translateServiceEnvironment(t *testing.T) {
 
 func Test_translateResources(t *testing.T) {
 	tests := []struct {
-		name      string
 		svc       *model.Service
+		name      string
 		resources apiv1.ResourceRequirements
 	}{
 		{
@@ -1409,21 +1411,22 @@ func Test_translateResources(t *testing.T) {
 
 func Test_translateAffinity(t *testing.T) {
 	tests := []struct {
-		name     string
-		svc      *model.Service
-		affinity *apiv1.Affinity
+		svc                   *model.Service
+		affinity              *apiv1.Affinity
+		name                  string
+		disableVolumeAffinity bool
 	}{
 		{
 			name: "none",
 			svc: &model.Service{
-				Environment: model.Environment{},
+				Environment: env.Environment{},
 			},
 			affinity: nil,
 		},
 		{
 			name: "only volume mounts",
 			svc: &model.Service{
-				VolumeMounts: []model.StackVolume{
+				VolumeMounts: []build.VolumeMounts{
 					{
 						LocalPath:  "",
 						RemotePath: "/var",
@@ -1435,7 +1438,7 @@ func Test_translateAffinity(t *testing.T) {
 		{
 			name: "one volume",
 			svc: &model.Service{
-				Volumes: []model.StackVolume{
+				Volumes: []build.VolumeMounts{
 					{
 						LocalPath:  "test",
 						RemotePath: "/var",
@@ -1463,7 +1466,7 @@ func Test_translateAffinity(t *testing.T) {
 		{
 			name: "multiple volumes",
 			svc: &model.Service{
-				Volumes: []model.StackVolume{
+				Volumes: []build.VolumeMounts{
 					{
 						LocalPath:  "test-1",
 						RemotePath: "/var",
@@ -1518,23 +1521,45 @@ func Test_translateAffinity(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "multiple volumes with volume affinity disabled",
+			svc: &model.Service{
+				Volumes: []build.VolumeMounts{
+					{
+						LocalPath:  "test-1",
+						RemotePath: "/var",
+					},
+					{
+						LocalPath:  "test-2",
+						RemotePath: "/var",
+					},
+					{
+						LocalPath:  "test-3",
+						RemotePath: "/var",
+					},
+				},
+			},
+			disableVolumeAffinity: true,
+			affinity:              nil,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			aff := translateAffinity(tt.svc)
-			if !reflect.DeepEqual(tt.affinity, aff) {
-				t.Fatal("Wrong translation")
+			if tt.disableVolumeAffinity {
+				t.Setenv(oktetoComposeVolumeAffinityEnabledEnvVar, "false")
 			}
+			aff := translateAffinity(tt.svc)
+			assert.Equal(t, tt.affinity, aff)
 		})
 	}
 }
 
 func TestGetSvcPublicPorts(t *testing.T) {
 	tests := []struct {
+		stack          *model.Stack
 		name           string
 		svcName        string
-		stack          *model.Stack
 		expectedLength int
 	}{
 		{
@@ -1618,10 +1643,10 @@ func TestGetSvcPublicPorts(t *testing.T) {
 
 func TestGetDeploymentStrategy(t *testing.T) {
 	tests := []struct {
-		name     string
+		expected appsv1.DeploymentStrategy
 		svc      *model.Service
 		envs     map[string]string
-		expected appsv1.DeploymentStrategy
+		name     string
 	}{
 		{
 			name: "default",
@@ -1733,10 +1758,10 @@ func TestGetDeploymentStrategy(t *testing.T) {
 
 func TestGetStrategyStrategy(t *testing.T) {
 	tests := []struct {
-		name     string
+		expected appsv1.StatefulSetUpdateStrategy
 		svc      *model.Service
 		envs     map[string]string
-		expected appsv1.StatefulSetUpdateStrategy
+		name     string
 	}{
 		{
 			name: "default",

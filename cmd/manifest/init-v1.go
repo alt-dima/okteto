@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	contextCMD "github.com/okteto/okteto/cmd/context"
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/analytics"
 	initCMD "github.com/okteto/okteto/pkg/cmd/init"
@@ -43,54 +42,8 @@ const (
 	defaultInitValues = "Use default values"
 )
 
-// InitV1 automatically generates the manifest
-func InitV1(opts *InitOpts, at analyticsTrackerInterface) error {
-	ctx := context.Background()
-
-	ctxResource := &model.ContextResource{}
-	if err := ctxResource.UpdateNamespace(opts.Namespace); err != nil {
-		return err
-	}
-
-	if err := ctxResource.UpdateContext(opts.Context); err != nil {
-		return err
-	}
-	ctxOptions := &contextCMD.ContextOptions{
-		Context:   ctxResource.Context,
-		Namespace: ctxResource.Namespace,
-		Show:      true,
-	}
-	if err := contextCMD.NewContextCommand().Run(ctx, ctxOptions); err != nil {
-		return err
-	}
-
-	opts.Language = os.Getenv(model.OktetoLanguageEnvVar)
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	opts.Workdir = cwd
-
-	mc := &ManifestCommand{
-		analyticsTracker: at,
-	}
-	if err := mc.RunInitV1(ctx, opts); err != nil {
-		return err
-	}
-
-	oktetoLog.Success(fmt.Sprintf("okteto manifest (%s) created", opts.DevPath))
-
-	if opts.DevPath == utils.DefaultManifest {
-		oktetoLog.Information("Run 'okteto up' to activate your development container")
-	} else {
-		oktetoLog.Information("Run 'okteto up -f %s' to activate your development container", opts.DevPath)
-	}
-	return nil
-}
-
 // RunInitV1 runs the sequence to generate okteto.yml
-func (*ManifestCommand) RunInitV1(ctx context.Context, opts *InitOpts) error {
+func (*Command) RunInitV1(ctx context.Context, opts *InitOpts) error {
 	oktetoLog.Println("This command walks you through creating an okteto manifest.")
 	oktetoLog.Println("It only covers the most common items, and tries to guess sensible defaults.")
 	oktetoLog.Println("See https://okteto.com/docs/reference/manifest/ for the official documentation about the okteto manifest.")
@@ -265,7 +218,7 @@ func askForLanguage() (string, error) {
 }
 
 func askForRunningApp(ctx context.Context, c kubernetes.Interface) (apps.App, error) {
-	namespace := okteto.Context().Namespace
+	namespace := okteto.GetContext().Namespace
 	dList, err := deployments.List(ctx, namespace, "", c)
 	if err != nil {
 		oktetoLog.Yellow("Failed to list deployments: %s", err)

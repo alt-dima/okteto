@@ -19,23 +19,26 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/env"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/model/forward"
+	"github.com/okteto/okteto/pkg/model/utils"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
 	apiv1 "k8s.io/api/core/v1"
 )
 
 type languageDefault struct {
+	securityContext *model.SecurityContext
 	image           string
 	path            string
 	command         []string
-	environment     []model.EnvVar
+	environment     []env.Var
 	volumes         []model.Volume
 	forward         []forward.Forward
 	reverse         []model.Reverse
 	remote          int
-	securityContext *model.SecurityContext
 }
 
 const (
@@ -226,7 +229,7 @@ func init() {
 		image:   "okteto/dotnetcore:3",
 		path:    "/usr/src/app",
 		command: []string{"bash"},
-		environment: []model.EnvVar{
+		environment: []env.Var{
 			{
 				Name:  "ASPNETCORE_ENVIRONMENT",
 				Value: "Development",
@@ -323,7 +326,7 @@ func GetDevDefaults(language, workdir string, imageConfig registry.ImageMetadata
 	}
 
 	dev := &model.Dev{
-		Image: &model.BuildInfo{
+		Image: &build.Info{
 			Name: vals.image,
 		},
 		Command: model.Command{
@@ -346,13 +349,13 @@ func GetDevDefaults(language, workdir string, imageConfig registry.ImageMetadata
 		SecurityContext: vals.securityContext,
 	}
 
-	name, err := model.GetValidNameFromFolder(workdir)
+	name, err := utils.GetValidNameFromFolder(workdir)
 	if err != nil {
 		return nil, err
 	}
 	dev.Name = name
-	dev.Context = okteto.Context().Name
-	dev.Namespace = okteto.Context().Namespace
+	dev.Context = okteto.GetContext().Name
+	dev.Namespace = okteto.GetContext().Namespace
 	return dev, nil
 }
 

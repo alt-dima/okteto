@@ -72,11 +72,11 @@ type userMutation struct {
 	Email           graphql.String
 	ExternalID      graphql.String `graphql:"externalID"`
 	Token           graphql.String
-	New             graphql.Boolean
 	Registry        graphql.String
 	Buildkit        graphql.String
 	Certificate     graphql.String
-	GlobalNamespace graphql.String  `graphql:"globalNamespace"`
+	GlobalNamespace graphql.String `graphql:"globalNamespace"`
+	New             graphql.Boolean
 	Analytics       graphql.Boolean `graphql:"telemetryEnabled"`
 }
 
@@ -87,14 +87,14 @@ type deprecatedUserMutation struct {
 	Email       graphql.String
 	ExternalID  graphql.String `graphql:"externalID"`
 	Token       graphql.String
-	New         graphql.Boolean
 	Registry    graphql.String
 	Buildkit    graphql.String
 	Certificate graphql.String
+	New         graphql.Boolean
 }
 
 // Auth authenticates in okteto with an OAuth code
-func (c *OktetoClient) Auth(ctx context.Context, code string) (*types.User, error) {
+func (c *Client) Auth(ctx context.Context, code string) (*types.User, error) {
 	user, err := c.authUser(ctx, code)
 	if err != nil {
 		oktetoLog.Infof("authentication error: %s", err)
@@ -102,7 +102,7 @@ func (c *OktetoClient) Auth(ctx context.Context, code string) (*types.User, erro
 			return nil, errGitHubNotVerifiedEmail
 		}
 		// This error is sent at the mutation with Metadata. Our current client for GraphQL does not support this kind of errors,
-		// so the information regarding metada is lost here. Message is still comunicated so we can check the error
+		// so the information regarding metada is lost here. Message is still communicated so we can check the error
 		// https://github.com/okteto/okteto/issues/2926
 		if IsErrGithubMissingBusinessEmail(err) {
 			return nil, err
@@ -124,7 +124,7 @@ func (c *OktetoClient) Auth(ctx context.Context, code string) (*types.User, erro
 	return user, nil
 }
 
-func (c *OktetoClient) authUser(ctx context.Context, code string) (*types.User, error) {
+func (c *Client) authUser(ctx context.Context, code string) (*types.User, error) {
 	var mutation authMutationStruct
 
 	queryVariables := map[string]interface{}{
@@ -165,7 +165,7 @@ func (c *OktetoClient) authUser(ctx context.Context, code string) (*types.User, 
 }
 
 // TODO: Remove this code when okteto char 0.10.8 is deprecated
-func (c *OktetoClient) deprecatedAuthUser(ctx context.Context, code string) (*types.User, error) {
+func (c *Client) deprecatedAuthUser(ctx context.Context, code string) (*types.User, error) {
 	var mutation deprecatedAuthMutationStruct
 	queryVariables := map[string]interface{}{
 		"code":   graphql.String(code),

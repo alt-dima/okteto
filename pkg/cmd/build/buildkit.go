@@ -23,17 +23,21 @@ import (
 	"strings"
 
 	"github.com/containerd/console"
+	dockerConfig "github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/client"
-	"github.com/moby/buildkit/cmd/buildctl/build"
+	buildkit "github.com/moby/buildkit/cmd/buildctl/build"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/session/sshforward/sshprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
+	"github.com/okteto/okteto/pkg/analytics"
 	"github.com/okteto/okteto/pkg/config"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
-	"github.com/okteto/okteto/pkg/okteto"
+	"github.com/okteto/okteto/pkg/log/io"
+	"github.com/okteto/okteto/pkg/registry"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/pkg/errors"
+	"github.com/spf13/afero"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/credentials/oauth"
@@ -46,7 +50,35 @@ const (
 type buildWriter struct{}
 
 // getSolveOpt returns the buildkit solve options
-func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
+func getSolveOpt(buildOptions *types.BuildOptions, okctx OktetoContextInterface, secretTempFolder string, fs afero.Fs) (*client.SolveOpt, error) {
+
+	if buildOptions.Tag != "" {
+		err := validateImage(okctx, buildOptions.Tag)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	imageCtrl := registry.NewImageCtrl(GetRegistryConfigFromOktetoConfig(okctx))
+	if okctx.IsOkteto() {
+		buildOptions.DevTag = imageCtrl.ExpandOktetoDevRegistry(registry.GetDevTagFromGlobal(buildOptions.Tag))
+		buildOptions.Tag = imageCtrl.ExpandOktetoDevRegistry(buildOptions.Tag)
+		buildOptions.Tag = imageCtrl.ExpandOktetoGlobalRegistry(buildOptions.Tag)
+		for i := range buildOptions.CacheFrom {
+			buildOptions.CacheFrom[i] = imageCtrl.ExpandOktetoDevRegistry(buildOptions.CacheFrom[i])
+			buildOptions.CacheFrom[i] = imageCtrl.ExpandOktetoGlobalRegistry(buildOptions.CacheFrom[i])
+		}
+		for i := range buildOptions.ExportCache {
+			buildOptions.ExportCache[i] = imageCtrl.ExpandOktetoDevRegistry(buildOptions.ExportCache[i])
+			buildOptions.ExportCache[i] = imageCtrl.ExpandOktetoGlobalRegistry(buildOptions.ExportCache[i])
+		}
+	}
+
+	// inject secrets to buildkit from temp folder
+	if err := replaceSecretsSourceEnvWithTempFile(afero.NewOsFs(), secretTempFolder, buildOptions); err != nil {
+		return nil, fmt.Errorf("%w: secret should have the format 'id=mysecret,src=/local/secret'", err)
+	}
+
 	var localDirs map[string]string
 	var frontendAttrs map[string]string
 
@@ -55,8 +87,8 @@ func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
 		if buildOptions.File == "" {
 			buildOptions.File = filepath.Join(buildOptions.Path, "Dockerfile")
 		}
-		if _, err := os.Stat(buildOptions.File); os.IsNotExist(err) {
-			return nil, fmt.Errorf("Dockerfile '%s' does not exist", buildOptions.File)
+		if _, err := fs.Stat(buildOptions.File); os.IsNotExist(err) {
+			return nil, fmt.Errorf("file '%s' not found: %w", buildOptions.File, err)
 		}
 		localDirs = map[string]string{
 			"context":    buildOptions.Path,
@@ -93,19 +125,28 @@ func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
 		frontendAttrs["add-hosts"] = strings.TrimSuffix(hosts, ",")
 	}
 
+	maxArgFormatParts := 2
 	for _, buildArg := range buildOptions.BuildArgs {
-		kv := strings.SplitN(buildArg, "=", 2)
-		if len(kv) != 2 {
+		kv := strings.SplitN(buildArg, "=", maxArgFormatParts)
+		if len(kv) != maxArgFormatParts {
 			return nil, fmt.Errorf("invalid build-arg value %s", buildArg)
 		}
 		frontendAttrs["build-arg:"+kv[0]] = kv[1]
 	}
 	attachable := []session.Attachable{}
-	if okteto.IsOkteto() {
-		ap := newDockerAndOktetoAuthProvider(okteto.Context().Registry, okteto.Context().UserID, okteto.Context().Token, os.Stderr)
+	if okctx.IsOkteto() {
+		apCtx := &authProviderContext{
+			isOkteto: okctx.IsOkteto(),
+			context:  okctx.GetCurrentName(),
+			token:    okctx.GetCurrentToken(),
+			cert:     okctx.GetCurrentCertStr(),
+		}
+
+		ap := newDockerAndOktetoAuthProvider(okctx.GetCurrentRegister(), okctx.GetCurrentUser(), okctx.GetCurrentToken(), apCtx, os.Stderr)
 		attachable = append(attachable, ap)
 	} else {
-		attachable = append(attachable, authprovider.NewDockerAuthProvider(os.Stderr))
+		dockerCfg := dockerConfig.LoadDefaultConfigFile(os.Stderr)
+		attachable = append(attachable, authprovider.NewDockerAuthProvider(dockerCfg))
 	}
 
 	for _, sess := range buildOptions.SshSessions {
@@ -122,7 +163,7 @@ func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
 	}
 
 	if len(buildOptions.Secrets) > 0 {
-		secretProvider, err := build.ParseSecret(buildOptions.Secrets)
+		secretProvider, err := buildkit.ParseSecret(buildOptions.Secrets)
 		if err != nil {
 			return nil, err
 		}
@@ -197,18 +238,13 @@ func getSolveOpt(buildOptions *types.BuildOptions) (*client.SolveOpt, error) {
 	return opt, nil
 }
 
-func getBuildkitClient(ctx context.Context) (*client.Client, error) {
-	buildkitHost := okteto.Context().Builder
-	octxStore := okteto.ContextStore()
-	for _, octx := range octxStore.Contexts {
-		// if a context configures buildkit with an Okteto Cluster
-		if octx.IsOkteto && octx.Builder == buildkitHost {
-			okteto.Context().Token = octx.Token
-			okteto.Context().Certificate = octx.Certificate
-		}
-	}
-	if okteto.Context().Certificate != "" {
-		certBytes, err := base64.StdEncoding.DecodeString(okteto.Context().Certificate)
+func getBuildkitClient(ctx context.Context, okctx OktetoContextInterface) (*client.Client, error) {
+	builder := okctx.GetCurrentBuilder()
+	okctx.UseContextByBuilder()
+
+	ctxCert := okctx.GetCurrentCertStr()
+	if ctxCert != "" {
+		certBytes, err := base64.StdEncoding.DecodeString(ctxCert)
 		if err != nil {
 			return nil, fmt.Errorf("certificate decoding error: %w", err)
 		}
@@ -217,37 +253,40 @@ func getBuildkitClient(ctx context.Context) (*client.Client, error) {
 			return nil, err
 		}
 
-		c, err := getClientForOktetoCluster(ctx)
+		c, err := getClientForOktetoCluster(ctx, builder, okctx.GetCurrentToken())
 		if err != nil {
 			oktetoLog.Infof("failed to create okteto build client: %s", err)
-			return nil, fmt.Errorf("failed to create the builder client: %v", err)
+			return nil, fmt.Errorf("failed to create the builder client: %w", err)
 		}
 
 		return c, nil
 	}
 
-	c, err := client.New(ctx, okteto.Context().Builder, client.WithFailFast())
+	c, err := client.New(ctx, builder, client.WithFailFast())
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create the builder client for %s", okteto.Context().Builder)
+		return nil, errors.Wrapf(err, "failed to create the builder client for %s", builder)
 	}
 	return c, nil
 }
 
-func getClientForOktetoCluster(ctx context.Context) (*client.Client, error) {
+func getClientForOktetoCluster(ctx context.Context, builder string, token string) (*client.Client, error) {
 
-	b, err := url.Parse(okteto.Context().Builder)
+	b, err := url.Parse(builder)
 	if err != nil {
-		return nil, errors.Wrapf(err, "invalid buildkit host %s", okteto.Context().Builder)
+		return nil, errors.Wrapf(err, "invalid buildkit host %s", builder)
 	}
 
 	creds := client.WithCredentialsAndSystemRoots(b.Hostname(), config.GetCertificatePath(), "", "")
 
 	oauthToken := &oauth2.Token{
-		AccessToken: okteto.Context().Token,
+		AccessToken: token,
 	}
 
-	rpc := client.WithRPCCreds(oauth.NewOauthAccess(oauthToken))
-	c, err := client.New(ctx, okteto.Context().Builder, client.WithFailFast(), creds, rpc)
+	rpc := client.WithRPCCreds(oauth.TokenSource{
+		TokenSource: oauth2.StaticTokenSource(oauthToken),
+	})
+	c, err := client.New(ctx, builder, client.WithFailFast(), creds, rpc)
+
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +294,7 @@ func getClientForOktetoCluster(ctx context.Context) (*client.Client, error) {
 	return c, nil
 }
 
-func solveBuild(ctx context.Context, c *client.Client, opt *client.SolveOpt, progress string) error {
+func solveBuild(ctx context.Context, c *client.Client, opt *client.SolveOpt, progress string, ioCtrl *io.Controller) error {
 	logFilterRules := []Rule{
 		{
 			condition:   BuildKitMissingCacheCondition,
@@ -317,13 +356,14 @@ func solveBuild(ctx context.Context, c *client.Client, opt *client.SolveOpt, pro
 			}
 			go func() {
 				// We use the plain channel to store the logs into a buffer and then show them in the UI
-				if err := progressui.DisplaySolveStatus(context.TODO(), "", nil, w, plainChannel); err != nil {
+				if _, err := progressui.DisplaySolveStatus(context.TODO(), "", nil, w, plainChannel); err != nil {
 					oktetoLog.Infof("could not display solve status: %s", err)
 				}
 			}()
 			// not using shared context to not disrupt display but let it finish reporting errors
 			// We need to wait until the tty channel is closed to avoid writing to stdout while the tty is being used
-			return progressui.DisplaySolveStatus(context.TODO(), "", c, oktetoLog.GetOutputWriter(), ttyChannel)
+			_, err := progressui.DisplaySolveStatus(context.TODO(), "", c, ioCtrl.Out(), ttyChannel)
+			return err
 		case "deploy":
 			err := deployDisplayer(context.TODO(), plainChannel, &types.BuildOptions{OutputMode: "deploy"})
 			commandFailChannel <- err
@@ -334,7 +374,8 @@ func solveBuild(ctx context.Context, c *client.Client, opt *client.SolveOpt, pro
 			return err
 		default:
 			// not using shared context to not disrupt display but let it finish reporting errors
-			return progressui.DisplaySolveStatus(context.TODO(), "", nil, oktetoLog.GetOutputWriter(), plainChannel)
+			_, err := progressui.DisplaySolveStatus(context.TODO(), "", nil, ioCtrl.Out(), plainChannel)
+			return err
 		}
 	})
 
@@ -352,6 +393,58 @@ func solveBuild(ctx context.Context, c *client.Client, opt *client.SolveOpt, pro
 		}
 	}
 	return nil
+}
+
+func runAndHandleBuild(ctx context.Context, c *client.Client, opt *client.SolveOpt, buildOptions *types.BuildOptions, okCtx OktetoContextInterface, ioCtrl *io.Controller) error {
+	err := solveBuild(ctx, c, opt, buildOptions.OutputMode, ioCtrl)
+	if err != nil {
+		oktetoLog.Infof("Failed to build image: %s", err.Error())
+	}
+	if isTransientError(err) {
+		oktetoLog.Yellow(`Failed to push '%s' to the registry:
+  %s,
+  Retrying ...`, buildOptions.Tag, err.Error())
+		success := true
+		err := solveBuild(ctx, c, opt, buildOptions.OutputMode, ioCtrl)
+		if err != nil {
+			success = false
+			oktetoLog.Infof("Failed to build image: %s", err.Error())
+		}
+		err = getErrorMessage(err, buildOptions.Tag)
+		analytics.TrackBuildTransientError(success)
+		return err
+	}
+
+	if err == nil && buildOptions.Tag != "" {
+		tags := strings.Split(buildOptions.Tag, ",")
+		reg := registry.NewOktetoRegistry(GetRegistryConfigFromOktetoConfig(okCtx))
+		for _, tag := range tags {
+			if _, err := reg.GetImageTagWithDigest(tag); err != nil {
+				oktetoLog.Yellow(`Failed to push '%s' metadata to the registry:
+	  %s,
+	  Retrying ...`, buildOptions.Tag, err.Error())
+				success := true
+				err := solveBuild(ctx, c, opt, buildOptions.OutputMode, ioCtrl)
+				if err != nil {
+					success = false
+					oktetoLog.Infof("Failed to build image: %s", err.Error())
+				}
+				err = getErrorMessage(err, buildOptions.Tag)
+				analytics.TrackBuildPullError(success)
+				return err
+			}
+		}
+	}
+
+	var tag string
+	if buildOptions != nil {
+		tag = buildOptions.Tag
+		if buildOptions.Manifest != nil && buildOptions.Manifest.Deploy != nil {
+			tag = buildOptions.Manifest.Deploy.Image
+		}
+	}
+	err = getErrorMessage(err, tag)
+	return err
 }
 
 func (*buildWriter) Write(p []byte) (int, error) {

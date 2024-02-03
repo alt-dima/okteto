@@ -87,11 +87,11 @@ func DeprecatedLoadManifest(devPath string) (*model.Manifest, error) {
 		manifest.Name = devenvironment.DeprecatedInferName(cwd)
 	}
 	if manifest.Namespace == "" {
-		manifest.Namespace = okteto.Context().Namespace
+		manifest.Namespace = okteto.GetContext().Namespace
 	}
 
 	if manifest.Context == "" {
-		manifest.Context = okteto.Context().Name
+		manifest.Context = okteto.GetContext().Name
 	}
 
 	for _, dev := range manifest.Dev {
@@ -99,8 +99,8 @@ func DeprecatedLoadManifest(devPath string) (*model.Manifest, error) {
 			return nil, err
 		}
 
-		dev.Namespace = okteto.Context().Namespace
-		dev.Context = okteto.Context().Name
+		dev.Namespace = okteto.GetContext().Namespace
+		dev.Context = okteto.GetContext().Name
 	}
 
 	return manifest, nil
@@ -114,12 +114,12 @@ func LoadManifestRc(dev *model.Dev) error {
 	if filesystem.FileExists(defaultDevRcPath) {
 		devRc, err = model.GetRc(defaultDevRcPath)
 		if err != nil {
-			return fmt.Errorf("error while reading %s file: %s", defaultDevRcPath, err.Error())
+			return fmt.Errorf("error while reading %s file: %w", defaultDevRcPath, err)
 		}
 	} else if filesystem.FileExists(secondaryDevRcPath) {
 		devRc, err = model.GetRc(secondaryDevRcPath)
 		if err != nil {
-			return fmt.Errorf("error while reading %s file: %s", defaultDevRcPath, err.Error())
+			return fmt.Errorf("error while reading %s file: %w", defaultDevRcPath, err)
 		}
 	}
 
@@ -144,8 +144,8 @@ func DeprecatedLoadManifestOrDefault(devPath, name string) (*model.Manifest, err
 		}
 		manifest.Dev[name] = model.NewDev()
 		manifest.Dev[name].Name = name
-		manifest.Dev[name].Namespace = okteto.Context().Namespace
-		manifest.Dev[name].Context = okteto.Context().Name
+		manifest.Dev[name].Namespace = okteto.GetContext().Namespace
+		manifest.Dev[name].Context = okteto.GetContext().Name
 		if err := manifest.Dev[name].SetDefaults(); err != nil {
 			return nil, err
 		}
@@ -332,7 +332,7 @@ func AskIfDeploy(name, namespace string) error {
 	if !deploy {
 		return oktetoErrors.UserError{
 			E:    fmt.Errorf("deployment %s doesn't exist in namespace %s", name, namespace),
-			Hint: "Launch your application first or use 'okteto namespace' to select a different namespace and try again",
+			Hint: "Deploy your application first or use 'okteto namespace' to select a different namespace and try again",
 		}
 	}
 	return nil
@@ -363,19 +363,6 @@ func CheckIfDirectory(path string) error {
 		return nil
 	}
 	return fmt.Errorf("'%s' is not a directory", path)
-}
-
-// CheckIfRegularFile checks if a path is a regular file
-func CheckIfRegularFile(path string) error {
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		oktetoLog.Infof("error on CheckIfRegularFile: %s", err.Error())
-		return fmt.Errorf("'%s' does not exist", path)
-	}
-	if !fileInfo.IsDir() {
-		return nil
-	}
-	return fmt.Errorf("'%s' is not a regular file", path)
 }
 
 func GetDownCommand(devPath string) string {

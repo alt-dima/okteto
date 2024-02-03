@@ -18,6 +18,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
@@ -29,9 +30,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	okteto.CurrentStore = &okteto.OktetoContextStore{
+	okteto.CurrentStore = &okteto.ContextStore{
 		CurrentContext: "test",
-		Contexts: map[string]*okteto.OktetoContext{
+		Contexts: map[string]*okteto.Context{
 			"test": {
 				Name:      "test",
 				Namespace: "namespace",
@@ -71,7 +72,7 @@ func TestGetStatefulset(t *testing.T) {
 	dev := &model.Dev{
 		Name:      "test",
 		Namespace: "test",
-		Image: &model.BuildInfo{
+		Image: &build.Info{
 			Name: "image",
 		},
 		PersistentVolumeInfo: &model.PersistentVolumeInfo{
@@ -116,7 +117,7 @@ func TestGetDeployment(t *testing.T) {
 	dev := &model.Dev{
 		Name:      "test",
 		Namespace: "test",
-		Image: &model.BuildInfo{
+		Image: &build.Info{
 			Name: "image",
 		},
 		PersistentVolumeInfo: &model.PersistentVolumeInfo{
@@ -134,9 +135,9 @@ func TestGetDeployment(t *testing.T) {
 
 func TestValidateMountPaths(t *testing.T) {
 	tests := []struct {
-		name          string
 		spec          *v1.PodSpec
 		dev           *model.Dev
+		name          string
 		expectedError bool
 	}{
 		{
@@ -277,7 +278,7 @@ func TestListDevModeOn(t *testing.T) {
 			"dev": &model.Dev{
 				Name:      "dev",
 				Namespace: "test",
-				Image: &model.BuildInfo{
+				Image: &build.Info{
 					Name: "image",
 				},
 				PersistentVolumeInfo: &model.PersistentVolumeInfo{
@@ -287,7 +288,7 @@ func TestListDevModeOn(t *testing.T) {
 			"sfs": &model.Dev{
 				Name:      "sfs",
 				Namespace: "test",
-				Image: &model.BuildInfo{
+				Image: &build.Info{
 					Name: "image",
 				},
 				PersistentVolumeInfo: &model.PersistentVolumeInfo{
@@ -297,7 +298,7 @@ func TestListDevModeOn(t *testing.T) {
 			"autocreate": &model.Dev{
 				Name:      "autocreate",
 				Namespace: "test",
-				Image: &model.BuildInfo{
+				Image: &build.Info{
 					Name: "image",
 				},
 				PersistentVolumeInfo: &model.PersistentVolumeInfo{
@@ -308,11 +309,11 @@ func TestListDevModeOn(t *testing.T) {
 		},
 	}
 	tests := []struct {
-		name          string
+		expectedError error
 		sfs           *appsv1.StatefulSet
 		ds            *appsv1.Deployment
+		name          string
 		expectedList  []string
-		expectedError error
 	}{
 		{
 			name: "none-dev-mode",

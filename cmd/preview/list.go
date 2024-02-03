@@ -35,15 +35,15 @@ var (
 
 // listFlags are the flags available for list commands
 type listFlags struct {
-	labels []string
 	output string
+	labels []string
 }
 
 type previewOutput struct {
 	Name     string   `json:"name" yaml:"name"`
 	Scope    string   `json:"scope" yaml:"scope"`
-	Sleeping bool     `json:"sleeping" yaml:"sleeping"`
 	Labels   []string `json:"labels" yaml:"labels"`
+	Sleeping bool     `json:"sleeping" yaml:"sleeping"`
 }
 
 type listPreviewCommand struct {
@@ -64,7 +64,7 @@ func List(ctx context.Context) *cobra.Command {
 		Use:   "list",
 		Short: "List all preview environments",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctxOptions := &contextCMD.ContextOptions{}
+			ctxOptions := &contextCMD.Options{}
 
 			if flags.output == "" {
 				ctxOptions.Show = true

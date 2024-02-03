@@ -22,12 +22,13 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/a8m/envsubst"
-	"github.com/a8m/envsubst/parse"
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/constants"
+	"github.com/okteto/okteto/pkg/deps"
 	"github.com/okteto/okteto/pkg/discovery"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/externalresource"
 	"github.com/okteto/okteto/pkg/filesystem"
@@ -93,17 +94,18 @@ var (
 
 // Manifest represents an okteto manifest
 type Manifest struct {
-	Name          string                                   `json:"name,omitempty" yaml:"name,omitempty"`
-	Namespace     string                                   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Context       string                                   `json:"context,omitempty" yaml:"context,omitempty"`
-	Icon          string                                   `json:"icon,omitempty" yaml:"icon,omitempty"`
-	Deploy        *DeployInfo                              `json:"deploy,omitempty" yaml:"deploy,omitempty"`
-	Dev           ManifestDevs                             `json:"dev,omitempty" yaml:"dev,omitempty"`
-	Destroy       *DestroyInfo                             `json:"destroy,omitempty" yaml:"destroy,omitempty"`
-	Build         ManifestBuild                            `json:"build,omitempty" yaml:"build,omitempty"`
-	Dependencies  ManifestDependencies                     `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
-	GlobalForward []forward.GlobalForward                  `json:"forward,omitempty" yaml:"forward,omitempty"`
-	External      externalresource.ExternalResourceSection `json:"external,omitempty" yaml:"external,omitempty"`
+	Name          string                   `json:"name,omitempty" yaml:"name,omitempty"`
+	Namespace     string                   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Context       string                   `json:"context,omitempty" yaml:"context,omitempty"`
+	Icon          string                   `json:"icon,omitempty" yaml:"icon,omitempty"`
+	ManifestPath  string                   `json:"-" yaml:"-"`
+	Deploy        *DeployInfo              `json:"deploy,omitempty" yaml:"deploy,omitempty"`
+	Dev           ManifestDevs             `json:"dev,omitempty" yaml:"dev,omitempty"`
+	Destroy       *DestroyInfo             `json:"destroy,omitempty" yaml:"destroy,omitempty"`
+	Build         build.ManifestBuild      `json:"build,omitempty" yaml:"build,omitempty"`
+	Dependencies  deps.ManifestSection     `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	GlobalForward []forward.GlobalForward  `json:"forward,omitempty" yaml:"forward,omitempty"`
+	External      externalresource.Section `json:"external,omitempty" yaml:"external,omitempty"`
 
 	Type     Archetype `json:"-" yaml:"-"`
 	Manifest []byte    `json:"-" yaml:"-"`
@@ -113,21 +115,15 @@ type Manifest struct {
 // ManifestDevs defines all the dev section
 type ManifestDevs map[string]*Dev
 
-// ManifestBuild defines all the build section
-type ManifestBuild map[string]*BuildInfo
-
-// ManifestDependencies represents the map of dependencies at a manifest
-type ManifestDependencies map[string]*Dependency
-
 // NewManifest creates a new empty manifest
 func NewManifest() *Manifest {
 	return &Manifest{
 		Dev:           map[string]*Dev{},
-		Build:         map[string]*BuildInfo{},
-		Dependencies:  map[string]*Dependency{},
+		Build:         map[string]*build.Info{},
+		Dependencies:  deps.ManifestSection{},
 		Deploy:        &DeployInfo{},
 		GlobalForward: []forward.GlobalForward{},
-		External:      externalresource.ExternalResourceSection{},
+		External:      externalresource.Section{},
 	}
 }
 
@@ -150,7 +146,7 @@ func NewManifestFromStack(stack *Stack) *Manifest {
 			},
 		},
 		Dev:   ManifestDevs{},
-		Build: ManifestBuild{},
+		Build: build.ManifestBuild{},
 		IsV2:  true,
 	}
 	cwd, err := os.Getwd()
@@ -169,7 +165,7 @@ func NewManifestFromStack(stack *Stack) *Manifest {
 // NewManifestFromDev creates a manifest from a dev
 func NewManifestFromDev(dev *Dev) *Manifest {
 	manifest := NewManifest()
-	name, err := ExpandEnv(dev.Name, true)
+	name, err := env.ExpandEnv(dev.Name)
 	if err != nil {
 		oktetoLog.Infof("could not expand dev name '%s'", dev.Name)
 		name = dev.Name
@@ -180,11 +176,11 @@ func NewManifestFromDev(dev *Dev) *Manifest {
 
 // DeployInfo represents what must be deployed for the app to work
 type DeployInfo struct {
-	Image          string              `json:"image,omitempty" yaml:"image,omitempty"`
-	Commands       []DeployCommand     `json:"commands,omitempty" yaml:"commands,omitempty"`
 	ComposeSection *ComposeSectionInfo `json:"compose,omitempty" yaml:"compose,omitempty"`
 	Endpoints      EndpointSpec        `json:"endpoints,omitempty" yaml:"endpoints,omitempty"`
 	Divert         *DivertDeploy       `json:"divert,omitempty" yaml:"divert,omitempty"`
+	Image          string              `json:"image,omitempty" yaml:"image,omitempty"`
+	Commands       []DeployCommand     `json:"commands,omitempty" yaml:"commands,omitempty"`
 	Remote         bool                `json:"remote,omitempty" yaml:"remote,omitempty"`
 }
 
@@ -200,10 +196,10 @@ type DivertDeploy struct {
 	Driver               string                 `json:"driver,omitempty" yaml:"driver,omitempty"`
 	Namespace            string                 `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	DeprecatedService    string                 `json:"service,omitempty" yaml:"service,omitempty"`
-	DeprecatedPort       int                    `json:"port,omitempty" yaml:"port,omitempty"`
 	DeprecatedDeployment string                 `json:"deployment,omitempty" yaml:"deployment,omitempty"`
 	VirtualServices      []DivertVirtualService `json:"virtualServices,omitempty" yaml:"virtualServices,omitempty"`
 	Hosts                []DivertHost           `json:"hosts,omitempty" yaml:"hosts,omitempty"`
+	DeprecatedPort       int                    `json:"port,omitempty" yaml:"port,omitempty"`
 }
 
 // DivertVirtualService represents a virtual service in a namespace to be diverted
@@ -221,8 +217,8 @@ type DivertHost struct {
 
 // ComposeSectionInfo represents information about compose file
 type ComposeSectionInfo struct {
-	ComposesInfo ComposeInfoList `json:"manifest,omitempty" yaml:"manifest,omitempty"`
 	Stack        *Stack          `json:"-" yaml:"-"`
+	ComposesInfo ComposeInfoList `json:"manifest,omitempty" yaml:"manifest,omitempty"`
 }
 
 type ComposeInfoList []ComposeInfo
@@ -274,7 +270,7 @@ func getManifestFromDevFilePath(cwd, manifestPath string) (*Manifest, error) {
 	if manifestPath != "" && !filepath.IsAbs(manifestPath) {
 		manifestPath = filepath.Join(cwd, manifestPath)
 	}
-	if manifestPath != "" && filesystem.FileExistsAndNotDir(manifestPath) {
+	if manifestPath != "" && filesystem.FileExistsAndNotDir(manifestPath, afero.NewOsFs()) {
 		return getManifestFromFile(cwd, manifestPath)
 	}
 
@@ -309,6 +305,14 @@ func GetManifestV1(manifestPath string) (*Manifest, error) {
 	}
 
 	return manifest, nil
+}
+
+func pathExistsAndDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil && os.IsNotExist(err) {
+		return false
+	}
+	return info.IsDir()
 }
 
 // GetManifestV2 gets a manifest from a path or search for the files to generate it
@@ -405,7 +409,7 @@ func getManifestFromFile(cwd, manifestPath string) (*Manifest, error) {
 				},
 			},
 			Dev:   ManifestDevs{},
-			Build: ManifestBuild{},
+			Build: build.ManifestBuild{},
 			IsV2:  true,
 		}
 		oktetoLog.AddToBuffer(oktetoLog.InfoLevel, "Unmarshalling compose...")
@@ -505,7 +509,7 @@ func GetInferredManifest(cwd string) (*Manifest, error) {
 				},
 			},
 			Dev:   ManifestDevs{},
-			Build: ManifestBuild{},
+			Build: build.ManifestBuild{},
 			IsV2:  true,
 		}
 		oktetoLog.AddToBuffer(oktetoLog.InfoLevel, "Unmarshalling compose...")
@@ -545,7 +549,7 @@ func GetInferredManifest(cwd string) (*Manifest, error) {
 				},
 			},
 			Dev:   ManifestDevs{},
-			Build: ManifestBuild{},
+			Build: build.ManifestBuild{},
 		}
 		return chartManifest, nil
 	}
@@ -569,7 +573,7 @@ func GetInferredManifest(cwd string) (*Manifest, error) {
 				},
 			},
 			Dev:   ManifestDevs{},
-			Build: ManifestBuild{},
+			Build: build.ManifestBuild{},
 		}
 		return k8sManifest, nil
 	}
@@ -632,31 +636,11 @@ func getOktetoManifest(devPath string) (*Manifest, error) {
 		return nil, newManifestFriendlyError(err)
 	}
 
-	ef := externalresource.ERFilesystemManager{
-		Fs: afero.NewOsFs(),
-	}
-
 	for name, external := range manifest.External {
 		external.SetDefaults(name)
-		ef.ExternalResource = *external
-		err := ef.LoadMarkdownContent(devPath)
-		if err != nil {
-			oktetoLog.Infof("error loading external resource %s: %s", name, err.Error())
-		}
 	}
 
-	for _, dev := range manifest.Dev {
-
-		if err := dev.loadAbsPaths(devPath); err != nil {
-			return nil, err
-		}
-
-		if err := dev.expandEnvFiles(); err != nil {
-			return nil, err
-		}
-
-		dev.computeParentSyncFolder()
-	}
+	manifest.ManifestPath = devPath
 
 	return manifest, nil
 }
@@ -685,10 +669,11 @@ func Read(bytes []byte) (*Manifest, error) {
 
 	hasShownWarning := false
 	for _, dev := range manifest.Dev {
-		if (dev.Image.Context != "" || dev.Image.Dockerfile != "") && !hasShownWarning {
+		if dev.Image != nil && (dev.Image.Context != "" || dev.Image.Dockerfile != "") && !hasShownWarning {
 			hasShownWarning = true
 			oktetoLog.Yellow(`The 'image' extended syntax is deprecated and will be removed in a future version. Define the images you want to build in the 'build' section of your manifest. More info at https://www.okteto.com/docs/reference/manifest/#build"`)
 		}
+
 	}
 
 	if err := manifest.setDefaults(); err != nil {
@@ -698,46 +683,33 @@ func Read(bytes []byte) (*Manifest, error) {
 	if err := manifest.validate(); err != nil {
 		return nil, err
 	}
+
 	manifest.Manifest = bytes
 	manifest.Type = OktetoManifestType
 	return manifest, nil
 }
 
 func (m *Manifest) validate() error {
-	if err := m.Build.validate(); err != nil {
+	if err := m.Build.Validate(); err != nil {
 		return err
 	}
 	return m.validateDivert()
 }
 
-func (b *ManifestBuild) validate() error {
-	cycle := getDependentCyclic(b.toGraph())
-	if len(cycle) == 1 { // depends on the same node
-		return fmt.Errorf("manifest build validation failed: image '%s' is referenced on its dependencies", cycle[0])
-	} else if len(cycle) > 1 {
-		svcsDependents := fmt.Sprintf("%s and %s", strings.Join(cycle[:len(cycle)-1], ", "), cycle[len(cycle)-1])
-		return fmt.Errorf("manifest validation failed: cyclic dependendecy found between %s", svcsDependents)
+func (s *Secret) validate() error {
+	if s.LocalPath == "" || s.RemotePath == "" {
+		return fmt.Errorf("secrets must follow the syntax 'LOCAL_PATH:REMOTE_PATH:MODE'")
 	}
+
+	if exists := filesystem.FileExistsAndNotDir(s.LocalPath, afero.NewOsFs()); !exists {
+		return fmt.Errorf("secret '%s' is not a regular file", s.LocalPath)
+	}
+
+	if !strings.HasPrefix(s.RemotePath, "/") {
+		return fmt.Errorf("secret remote path '%s' must be an absolute path", s.RemotePath)
+	}
+
 	return nil
-}
-
-// GetSvcsToBuildFromList returns the builds from a list and all its
-func (b *ManifestBuild) GetSvcsToBuildFromList(toBuild []string) []string {
-	initialSvcsToBuild := toBuild
-	svcsToBuildWithDependencies := getDependentNodes(b.toGraph(), toBuild)
-	if len(initialSvcsToBuild) != len(svcsToBuildWithDependencies) {
-		dependantBuildImages := getListDiff(initialSvcsToBuild, svcsToBuildWithDependencies)
-		oktetoLog.Warning("The following build images need to be built because of dependencies: [%s]", strings.Join(dependantBuildImages, ", "))
-	}
-	return svcsToBuildWithDependencies
-}
-
-func (b ManifestBuild) toGraph() graph {
-	g := graph{}
-	for k, v := range b {
-		g[k] = v.DependsOn
-	}
-	return g
 }
 
 // SanitizeSvcNames sanitize service names in 'dev', 'build' and 'global forward' sections
@@ -841,16 +813,16 @@ func (m *Manifest) setDefaults() error {
 		if m.Deploy.Divert.Driver == "" {
 			m.Deploy.Divert.Driver = constants.OktetoDivertWeaverDriver
 		}
-		m.Deploy.Divert.Namespace, err = ExpandEnv(m.Deploy.Divert.Namespace, false)
+		m.Deploy.Divert.Namespace, err = env.ExpandEnvIfNotEmpty(m.Deploy.Divert.Namespace)
 		if err != nil {
 			return err
 		}
 		for i := range m.Deploy.Divert.Hosts {
-			m.Deploy.Divert.Hosts[i].VirtualService, err = ExpandEnv(m.Deploy.Divert.Hosts[i].VirtualService, false)
+			m.Deploy.Divert.Hosts[i].VirtualService, err = env.ExpandEnvIfNotEmpty(m.Deploy.Divert.Hosts[i].VirtualService)
 			if err != nil {
 				return err
 			}
-			m.Deploy.Divert.Hosts[i].Namespace, err = ExpandEnv(m.Deploy.Divert.Hosts[i].Namespace, false)
+			m.Deploy.Divert.Hosts[i].Namespace, err = env.ExpandEnvIfNotEmpty(m.Deploy.Divert.Hosts[i].Namespace)
 			if err != nil {
 				return err
 			}
@@ -861,19 +833,19 @@ func (m *Manifest) setDefaults() error {
 			d.Name = dName
 		}
 		if err := d.expandEnvVars(); err != nil {
-			return fmt.Errorf("Error on dev '%s': %s", d.Name, err)
+			return fmt.Errorf("error on dev '%s': %w", d.Name, err)
 		}
 		for _, s := range d.Services {
 			if err := s.expandEnvVars(); err != nil {
-				return fmt.Errorf("Error on dev '%s': %s", d.Name, err)
+				return fmt.Errorf("error on dev '%s': %w", d.Name, err)
 			}
 			if err := s.validateForExtraFields(); err != nil {
-				return fmt.Errorf("Error on dev '%s': %s", d.Name, err)
+				return fmt.Errorf("error on dev '%s': %w", d.Name, err)
 			}
 		}
 
 		if err := d.SetDefaults(); err != nil {
-			return fmt.Errorf("Error on dev '%s': %s", d.Name, err)
+			return fmt.Errorf("error on dev '%s': %w", d.Name, err)
 		}
 
 		d.translateDeprecatedMetadataFields()
@@ -892,13 +864,16 @@ func (m *Manifest) setDefaults() error {
 	}
 
 	for _, b := range m.Build {
+		if b == nil {
+			continue
+		}
 		if b.Name != "" {
 			b.Context = b.Name
 			b.Name = ""
 		}
 
 		if !(b.Image != "" && len(b.VolumesToInclude) > 0 && b.Dockerfile == "") {
-			b.setBuildDefaults()
+			b.SetBuildDefaults()
 		}
 	}
 
@@ -942,7 +917,7 @@ func (manifest *Manifest) ExpandEnvVars() error {
 					continue
 				}
 				tag := fmt.Sprintf("${OKTETO_BUILD_%s_IMAGE}", strings.ToUpper(strings.ReplaceAll(svcName, "-", "_")))
-				expandedTag, err := ExpandEnv(tag, true)
+				expandedTag, err := env.ExpandEnv(tag)
 				if err != nil {
 					return err
 				}
@@ -969,7 +944,7 @@ func (manifest *Manifest) ExpandEnvVars() error {
 	}
 	if manifest.Destroy != nil {
 		if manifest.Destroy.Image != "" {
-			manifest.Destroy.Image, err = ExpandEnv(manifest.Destroy.Image, true)
+			manifest.Destroy.Image, err = env.ExpandEnv(manifest.Destroy.Image)
 			if err != nil {
 				return err
 			}
@@ -978,100 +953,17 @@ func (manifest *Manifest) ExpandEnvVars() error {
 
 	for devName, devInfo := range manifest.Dev {
 		if _, ok := manifest.Build[devName]; ok && devInfo.Image == nil && devInfo.Autocreate {
-			devInfo.Image = &BuildInfo{
+			devInfo.Image = &build.Info{
 				Name: fmt.Sprintf("${OKTETO_BUILD_%s_IMAGE}", strings.ToUpper(strings.ReplaceAll(devName, "-", "_"))),
 			}
 		}
 		if devInfo.Image != nil {
-			devInfo.Image.Name, err = ExpandEnv(devInfo.Image.Name, false)
+			devInfo.Image.Name, err = env.ExpandEnvIfNotEmpty(devInfo.Image.Name)
 			if err != nil {
 				return err
 			}
 		}
 	}
-
-	return nil
-}
-
-// Dependency represents a dependency object at the manifest
-type Dependency struct {
-	Repository   string        `json:"repository" yaml:"repository"`
-	ManifestPath string        `json:"manifest,omitempty" yaml:"manifest,omitempty"`
-	Branch       string        `json:"branch,omitempty" yaml:"branch,omitempty"`
-	Variables    Environment   `json:"variables,omitempty" yaml:"variables,omitempty"`
-	Wait         bool          `json:"wait,omitempty" yaml:"wait,omitempty"`
-	Timeout      time.Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-	Namespace    string        `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-}
-
-// GetTimeout returns dependency.Timeout if it's set or the one passed as arg if it's not
-func (d *Dependency) GetTimeout(defaultTimeout time.Duration) time.Duration {
-	if d.Timeout != 0 {
-		return d.Timeout
-	}
-	return defaultTimeout
-}
-
-// ExpandVars sets dependencies values if values fits with list params
-func (d *Dependency) ExpandVars(variables []string) error {
-	parser := parse.New("string", append(os.Environ(), variables...), &parse.Restrictions{})
-
-	expandedBranch, err := parser.Parse(d.Branch)
-	if err != nil {
-		return fmt.Errorf("error expanding 'branch': %w", err)
-	}
-	if expandedBranch != "" {
-		d.Branch = expandedBranch
-	}
-
-	expandedRepository, err := parser.Parse(d.Repository)
-	if err != nil {
-		return fmt.Errorf("error expanding 'repository': %w", err)
-	}
-	if expandedRepository != "" {
-		d.Repository = expandedRepository
-	}
-
-	expandedManifestPath, err := parser.Parse(d.ManifestPath)
-	if err != nil {
-		return fmt.Errorf("error expanding 'manifest': %w", err)
-	}
-	if expandedManifestPath != "" {
-		d.ManifestPath = expandedManifestPath
-	}
-
-	expandedNamespace, err := parser.Parse(d.Namespace)
-	if err != nil {
-		return fmt.Errorf("error expanding 'namespace': %w", err)
-	}
-	if expandedNamespace != "" {
-		d.Namespace = expandedNamespace
-	}
-
-	expandedVariables := Environment{}
-	for _, v := range d.Variables {
-		expandedVarName, err := parser.Parse(v.Name)
-		if err != nil {
-			return fmt.Errorf("error expanding variable name: %w", err)
-		}
-		if expandedVarName != "" {
-			v.Name = expandedVarName
-		}
-
-		expandedVarValue, err := parser.Parse(v.Value)
-		if err != nil {
-			return fmt.Errorf("error expanding variable value: %w", err)
-		}
-		if expandedVarValue != "" {
-			v.Value = expandedVarValue
-		}
-
-		expandedVariables = append(expandedVariables, EnvVar{
-			Name:  v.Name,
-			Value: v.Value,
-		})
-	}
-	d.Variables = expandedVariables
 
 	return nil
 }
@@ -1107,7 +999,7 @@ func (m *Manifest) InferFromStack(cwd string) (*Manifest, error) {
 				buildInfo.Image = svcInfo.Image
 			}
 		case len(svcInfo.VolumeMounts) > 0:
-			buildInfo = &BuildInfo{
+			buildInfo = &build.Info{
 				Image:            svcInfo.Image,
 				VolumesToInclude: svcInfo.VolumeMounts,
 			}
@@ -1173,7 +1065,7 @@ func (m *Manifest) WriteToFile(filePath string) error {
 		} else {
 			if v, ok := m.Build[dName]; ok {
 				if v.Image != "" {
-					d.Image = &BuildInfo{Name: v.Image}
+					d.Image = &build.Info{Name: v.Image}
 				} else {
 					d.Image = nil
 				}

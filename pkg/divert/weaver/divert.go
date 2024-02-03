@@ -26,11 +26,11 @@ import (
 
 // Driver weaver struct for the divert driver
 type Driver struct {
+	client    kubernetes.Interface
+	cache     *cache
 	name      string
 	namespace string
 	divert    model.DivertDeploy
-	client    kubernetes.Interface
-	cache     *cache
 }
 
 func New(m *model.Manifest, c kubernetes.Interface) *Driver {
@@ -68,8 +68,8 @@ func (d *Driver) Deploy(ctx context.Context) error {
 	return nil
 }
 
-// nolint:unparam
 // Destroy implements from the interface diver.Driver
+// nolint:unparam
 func (d *Driver) Destroy(_ context.Context) error {
 	oktetoLog.Success("Divert from '%s' successfully destroyed", d.divert.Namespace)
 	return nil

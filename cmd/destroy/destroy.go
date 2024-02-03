@@ -27,11 +27,13 @@ import (
 	"github.com/okteto/okteto/pkg/config"
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/devenvironment"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/k8s/kubeconfig"
 	"github.com/okteto/okteto/pkg/k8s/namespaces"
 	"github.com/okteto/okteto/pkg/k8s/secrets"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	oktetoPath "github.com/okteto/okteto/pkg/path"
@@ -57,6 +59,7 @@ type secretHandler interface {
 
 // Options represents the options for destroy command
 type Options struct {
+	Manifest *model.Manifest
 	// ManifestPathFlag is the option -f as introduced by the user when executing this command.
 	// This is stored at the configmap as filename to redeploy from the ui.
 	ManifestPathFlag string
@@ -64,13 +67,12 @@ type Options struct {
 	// This might change its value during execution
 	ManifestPath        string
 	Name                string
-	Variables           []string
-	Manifest            *model.Manifest
 	Namespace           string
+	K8sContext          string
+	Variables           []string
 	DestroyVolumes      bool
 	DestroyDependencies bool
 	ForceDestroy        bool
-	K8sContext          string
 	RunWithoutBash      bool
 	DestroyAll          bool
 	RunInRemote         bool
@@ -86,20 +88,20 @@ type analyticsTrackerInterface interface {
 }
 
 type destroyCommand struct {
-	getManifest func(path string) (*model.Manifest, error)
-
 	executor          executor.ManifestExecutor
 	nsDestroyer       destroyer
 	secrets           secretHandler
 	k8sClientProvider okteto.K8sClientProvider
 	ConfigMapHandler  configMapHandler
-	oktetoClient      *okteto.OktetoClient
-	buildCtrl         buildCtrl
 	analyticsTracker  analyticsTrackerInterface
+	getManifest       func(path string) (*model.Manifest, error)
+	oktetoClient      *okteto.Client
+	ioCtrl            *io.Controller
+	buildCtrl         buildCtrl
 }
 
 // Destroy destroys the dev application defined by the manifest
-func Destroy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
+func Destroy(ctx context.Context, at analyticsTrackerInterface, ioCtrl *io.Controller, k8sLogger *io.K8sLogger) *cobra.Command {
 	options := &Options{
 		Variables: []string{},
 	}
@@ -134,7 +136,7 @@ func Destroy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 				if err.Error() == fmt.Errorf(oktetoErrors.ErrNotLogged, okteto.CloudURL).Error() {
 					return err
 				}
-				if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.ContextOptions{Namespace: options.Namespace}); err != nil {
+				if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.Options{Namespace: options.Namespace}); err != nil {
 					return err
 				}
 			}
@@ -145,12 +147,12 @@ func Destroy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 			}
 
 			if options.Name == "" {
-				c, _, err := okteto.NewK8sClientProvider().Provide(okteto.Context().Cfg)
+				c, _, err := okteto.NewK8sClientProviderWithLogger(k8sLogger).ProvideWithLogger(okteto.GetContext().Cfg, k8sLogger)
 				if err != nil {
 					return err
 				}
 				inferer := devenvironment.NewNameInferer(c)
-				options.Name = inferer.InferName(ctx, cwd, okteto.Context().Namespace, options.ManifestPathFlag)
+				options.Name = inferer.InferName(ctx, cwd, okteto.GetContext().Namespace, options.ManifestPathFlag)
 				if err != nil {
 					return fmt.Errorf("could not infer environment name")
 				}
@@ -164,17 +166,17 @@ func Destroy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			k8sClient, cfg, err := okteto.GetK8sClient()
+			k8sClient, cfg, err := okteto.GetK8sClientWithLogger(k8sLogger)
 			if err != nil {
 				return err
 			}
 
 			if options.Namespace == "" {
-				options.Namespace = okteto.Context().Namespace
+				options.Namespace = okteto.GetContext().Namespace
 			}
 
-			var okClient = &okteto.OktetoClient{}
-			if okteto.Context().IsOkteto {
+			var okClient = &okteto.Client{}
+			if okteto.GetContext().IsOkteto {
 				okClient, err = okteto.NewOktetoClient()
 				if err != nil {
 					return err
@@ -185,15 +187,16 @@ func Destroy(ctx context.Context, at analyticsTrackerInterface) *cobra.Command {
 				ConfigMapHandler:  NewConfigmapHandler(k8sClient),
 				nsDestroyer:       namespaces.NewNamespace(dynClient, discClient, cfg, k8sClient),
 				secrets:           secrets.NewSecrets(k8sClient),
-				k8sClientProvider: okteto.NewK8sClientProvider(),
+				k8sClientProvider: okteto.NewK8sClientProviderWithLogger(k8sLogger),
 				oktetoClient:      okClient,
-				buildCtrl:         newBuildCtrl(options.Name, at),
+				buildCtrl:         newBuildCtrl(options.Name, at, ioCtrl),
 				analyticsTracker:  at,
 				getManifest:       model.GetManifestV2,
+				ioCtrl:            ioCtrl,
 			}
 
 			kubeconfigPath := getTempKubeConfigFile(options.Name)
-			if err := kubeconfig.Write(okteto.Context().Cfg, kubeconfigPath); err != nil {
+			if err := kubeconfig.Write(okteto.GetContext().Cfg, kubeconfigPath); err != nil {
 				return err
 			}
 			os.Setenv("KUBECONFIG", kubeconfigPath)
@@ -240,7 +243,7 @@ func getTempKubeConfigFile(name string) string {
 
 func shouldRunInRemote(opts *Options) bool {
 	// already in remote so we need to deploy locally
-	if utils.LoadBoolean(constants.OktetoDeployRemote) {
+	if env.LoadBoolean(constants.OktetoDeployRemote) {
 		return false
 	}
 
@@ -256,7 +259,7 @@ func shouldRunInRemote(opts *Options) bool {
 		}
 	}
 
-	if utils.LoadBoolean(constants.OktetoForceRemote) {
+	if env.LoadBoolean(constants.OktetoForceRemote) {
 		return true
 	}
 
@@ -270,7 +273,7 @@ func (dc *destroyCommand) getDestroyer(ctx context.Context, opts *Options) (dest
 	)
 
 	if opts.DestroyAll {
-		if !okteto.Context().IsOkteto {
+		if !okteto.GetContext().IsOkteto {
 			return nil, oktetoErrors.ErrContextIsNotOktetoCluster
 		}
 		destroyer, err = newLocalDestroyerAll(dc.k8sClientProvider, dc.executor, dc.nsDestroyer, dc.oktetoClient)
@@ -301,14 +304,14 @@ func (dc *destroyCommand) getDestroyer(ctx context.Context, opts *Options) (dest
 				return nil, err
 			}
 			opts.Manifest = manifest
-			opts.Manifest.Destroy.Image, err = model.ExpandEnv(manifest.Destroy.Image, false)
+			opts.Manifest.Destroy.Image, err = env.ExpandEnvIfNotEmpty(manifest.Destroy.Image)
 			if err != nil {
 				return nil, err
 			}
 		}
 
 		if shouldRunInRemote(opts) {
-			destroyer = newRemoteDestroyer(manifest)
+			destroyer = newRemoteDestroyer(manifest, dc.ioCtrl)
 			oktetoLog.Info("Destroying remotely...")
 		} else {
 			destroyerAll, err := newLocalDestroyerAll(dc.k8sClientProvider, dc.executor, dc.nsDestroyer, dc.oktetoClient)

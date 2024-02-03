@@ -213,7 +213,7 @@ func Destroy(ctx context.Context, podName, namespace string, c kubernetes.Interf
 		ctx,
 		podName,
 		metav1.DeleteOptions{
-			GracePeriodSeconds: pointer.Int64Ptr(0),
+			GracePeriodSeconds: pointer.Int64(0),
 		},
 	)
 	if err != nil && !oktetoErrors.IsNotFound(err) {
@@ -249,8 +249,9 @@ func parseUserID(output string) int64 {
 		return -1
 	}
 
+	validUserLineParts := 2
 	parts := strings.Split(lines[0], ":")
-	if len(parts) != 2 {
+	if len(parts) != validUserLineParts {
 		oktetoLog.Infof("failed to parse USER entry: %s", lines[0])
 		return -1
 	}
@@ -312,12 +313,12 @@ func Restart(ctx context.Context, dev *model.Dev, c *kubernetes.Clientset, sn st
 			continue
 		}
 		found = true
-		err := c.CoreV1().Pods(dev.Namespace).Delete(ctx, pods.Items[i].Name, metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64Ptr(0)})
+		err := c.CoreV1().Pods(dev.Namespace).Delete(ctx, pods.Items[i].Name, metav1.DeleteOptions{GracePeriodSeconds: pointer.Int64(0)})
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				return nil
 			}
-			return fmt.Errorf("error deleting kubernetes service: %s", err)
+			return fmt.Errorf("error deleting kubernetes service: %w", err)
 		}
 	}
 
@@ -350,13 +351,13 @@ func waitUntilRunning(ctx context.Context, namespace, selector string, c *kubern
 
 		allRunning := true
 		for i := range pods.Items {
-			switch pods.Items[i].Status.Phase {
-			case apiv1.PodPending:
+			phase := pods.Items[i].Status.Phase
+			if phase == apiv1.PodPending {
 				allRunning = false
 				notready[pods.Items[i].GetName()] = true
-			case apiv1.PodFailed:
-				return fmt.Errorf("Pod %s failed to start", pods.Items[i].Name)
-			case apiv1.PodRunning:
+			} else if phase == apiv1.PodFailed {
+				return fmt.Errorf("pod %s failed to start", pods.Items[i].Name)
+			} else if phase == apiv1.PodRunning {
 				if isRunning(&pods.Items[i]) {
 					if _, ok := notready[pods.Items[i].GetName()]; ok {
 						oktetoLog.Infof("pod/%s is ready", pods.Items[i].GetName())
@@ -385,7 +386,7 @@ func waitUntilRunning(ctx context.Context, namespace, selector string, c *kubern
 		pods = append(pods, k)
 	}
 
-	return fmt.Errorf("Pod(s) %s didn't restart after 60 seconds", strings.Join(pods, ","))
+	return fmt.Errorf("pod(s) %s didn't restart after 60 seconds", strings.Join(pods, ","))
 }
 
 func isRunning(p *apiv1.Pod) bool {

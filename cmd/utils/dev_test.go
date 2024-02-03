@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/okteto/okteto/pkg/build"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
@@ -28,10 +29,10 @@ import (
 
 func Test_LoadManifestOrDefault(t *testing.T) {
 	var tests = []struct {
+		dev        *model.Dev
 		name       string
 		deployment string
 		expectErr  bool
-		dev        *model.Dev
 	}{
 		{
 			name:       "default",
@@ -49,7 +50,7 @@ func Test_LoadManifestOrDefault(t *testing.T) {
 			expectErr:  false,
 			dev: &model.Dev{
 				Name: "loaded",
-				Image: &model.BuildInfo{
+				Image: &build.Info{
 					Name: "okteto/test:1.0",
 				},
 				Sync: model.Sync{
@@ -64,9 +65,9 @@ func Test_LoadManifestOrDefault(t *testing.T) {
 		},
 	}
 
-	okteto.CurrentStore = &okteto.OktetoContextStore{
+	okteto.CurrentStore = &okteto.ContextStore{
 		CurrentContext: "test",
-		Contexts: map[string]*okteto.OktetoContext{
+		Contexts: map[string]*okteto.Context{
 			"test": {
 				Name:      "test",
 				Namespace: "namespace",
@@ -187,9 +188,9 @@ func Test_ParseURL(t *testing.T) {
 
 func Test_CheckIfDirectory(t *testing.T) {
 	tests := []struct {
+		want error
 		name string
 		path string
-		want error
 	}{
 		{
 			name: "directory",
@@ -223,52 +224,14 @@ func Test_CheckIfDirectory(t *testing.T) {
 	}
 }
 
-func Test_CheckIfRegularFile(t *testing.T) {
-	tests := []struct {
-		name string
-		path string
-		want error
-	}{
-		{
-			name: "file",
-			path: "dev.go",
-			want: nil,
-		},
-		{
-			name: "directory",
-			path: ".",
-			want: fmt.Errorf("'.' is not a regular file"),
-		},
-		{
-			name: "file",
-			path: "no.go",
-			want: fmt.Errorf("'no.go' does not exist"),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := CheckIfRegularFile(tt.path)
-			if got == nil && tt.want == nil {
-				return
-			}
-			if got == nil || tt.want == nil {
-				t.Errorf("CheckIfRegularFile(%s) = %s, want %s", tt.path, got, tt.want)
-			}
-			if got.Error() != tt.want.Error() {
-				t.Errorf("CheckIfRegularFile(%s) = %s, want %s", tt.path, got, tt.want)
-			}
-		})
-	}
-}
-
 func Test_GetDevFromManifest(t *testing.T) {
 	wrongDevName := "not-test"
 	tests := []struct {
-		name     string
-		manifest *model.Manifest
-		devName  string
-		dev      *model.Dev
 		err      error
+		manifest *model.Manifest
+		dev      *model.Dev
+		name     string
+		devName  string
 	}{
 		{
 			name:     "manifest has no dev section",
@@ -348,8 +311,8 @@ func Test_GetDevFromManifest(t *testing.T) {
 }
 
 type FakeOktetoSelector struct {
-	dev string
 	err error
+	dev string
 }
 
 func (s *FakeOktetoSelector) AskForOptionsOkteto(_ []SelectorItem, _ int) (string, error) {
@@ -357,12 +320,15 @@ func (s *FakeOktetoSelector) AskForOptionsOkteto(_ []SelectorItem, _ int) (strin
 }
 
 func Test_SelectDevFromManifest(t *testing.T) {
+	localAbsPath, err := filepath.Abs("/")
+	assert.NoError(t, err)
+
 	tests := []struct {
-		name     string
+		err      error
 		manifest *model.Manifest
 		selector *FakeOktetoSelector
 		dev      *model.Dev
-		err      error
+		name     string
 	}{
 		{
 			name: "dev-is-selected",
@@ -380,10 +346,11 @@ func Test_SelectDevFromManifest(t *testing.T) {
 							},
 						},
 						SSHServerPort: 80,
-						Image:         &model.BuildInfo{},
+						Image:         &build.Info{},
 					},
 					"test-2": &model.Dev{},
 				},
+				ManifestPath: filepath.Join(localAbsPath, "okteto.yml"),
 			},
 			selector: &FakeOktetoSelector{
 				dev: "test",
@@ -400,7 +367,7 @@ func Test_SelectDevFromManifest(t *testing.T) {
 					},
 				},
 				SSHServerPort: 80,
-				Image:         &model.BuildInfo{},
+				Image:         &build.Info{},
 			},
 		},
 		{
@@ -434,7 +401,6 @@ func Test_SelectDevFromManifest(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func Test_AskYesNo(t *testing.T) {

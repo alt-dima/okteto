@@ -19,6 +19,8 @@ import (
 
 	v2 "github.com/okteto/okteto/cmd/build/v2"
 	"github.com/okteto/okteto/pkg/analytics"
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -26,13 +28,13 @@ import (
 )
 
 type fakeBuilderV2 struct {
-	getSvcs fakeGetSvcs
 	build   error
+	getSvcs fakeGetSvcs
 }
 
 type fakeGetSvcs struct {
-	svcs []string
 	err  error
+	svcs []string
 }
 
 func (fb fakeBuilderV2) GetServicesToBuild(ctx context.Context, manifest *model.Manifest, svcToDeploy []string) ([]string, error) {
@@ -49,15 +51,15 @@ func TestBuildNecessaryImages(t *testing.T) {
 		builder  fakeBuilderV2
 	}
 	tt := []struct {
+		expected error
 		name     string
 		input    input
-		expected error
 	}{
 		{
 			name: "image is not okteto env variable",
 			input: input{
 				manifest: &model.Manifest{
-					Build: model.ManifestBuild{},
+					Build: build.ManifestBuild{},
 					Destroy: &model.DestroyInfo{
 						Image: "image",
 					},
@@ -74,7 +76,7 @@ func TestBuildNecessaryImages(t *testing.T) {
 			name: "image is okteto variable but not defined in build section",
 			input: input{
 				manifest: &model.Manifest{
-					Build: model.ManifestBuild{
+					Build: build.ManifestBuild{
 						"okteto": {},
 					},
 					Destroy: &model.DestroyInfo{
@@ -93,7 +95,7 @@ func TestBuildNecessaryImages(t *testing.T) {
 			name: "image is okteto variable/fails to get services",
 			input: input{
 				manifest: &model.Manifest{
-					Build: model.ManifestBuild{
+					Build: build.ManifestBuild{
 						"test": {},
 					},
 					Destroy: &model.DestroyInfo{
@@ -112,7 +114,7 @@ func TestBuildNecessaryImages(t *testing.T) {
 			name: "image is okteto variable/is already build",
 			input: input{
 				manifest: &model.Manifest{
-					Build: model.ManifestBuild{
+					Build: build.ManifestBuild{
 						"test": {},
 					},
 					Destroy: &model.DestroyInfo{
@@ -131,7 +133,7 @@ func TestBuildNecessaryImages(t *testing.T) {
 			name: "image is okteto variable/build fails",
 			input: input{
 				manifest: &model.Manifest{
-					Build: model.ManifestBuild{
+					Build: build.ManifestBuild{
 						"test": {},
 					},
 					Destroy: &model.DestroyInfo{
@@ -151,7 +153,7 @@ func TestBuildNecessaryImages(t *testing.T) {
 			name: "image is okteto variable/build succeeds",
 			input: input{
 				manifest: &model.Manifest{
-					Build: model.ManifestBuild{
+					Build: build.ManifestBuild{
 						"test": {},
 					},
 					Destroy: &model.DestroyInfo{
@@ -186,7 +188,7 @@ func (fakeAnalyticsTracker) TrackImageBuild(...*analytics.ImageBuildMetadata) {}
 func (fakeAnalyticsTracker) TrackDestroy(analytics.DestroyMetadata)           {}
 
 func Test_newBuildCtrl(t *testing.T) {
-	got := newBuildCtrl("test-control", &fakeAnalyticsTracker{})
+	got := newBuildCtrl("test-control", &fakeAnalyticsTracker{}, io.NewIOController())
 
 	require.Equal(t, "test-control", got.name)
 	require.IsType(t, got.builder, &v2.OktetoBuilder{})
