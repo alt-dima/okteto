@@ -29,7 +29,6 @@ import (
 	"github.com/okteto/okteto/pkg/k8s/secrets"
 	"github.com/okteto/okteto/pkg/k8s/services"
 	"github.com/okteto/okteto/pkg/k8s/volumes"
-	"github.com/okteto/okteto/pkg/keda"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
@@ -70,10 +69,6 @@ func (up *upContext) activate() error {
 	app, create, err := utils.GetApp(ctx, up.Dev, k8sClient, up.isRetry)
 	if err != nil {
 		return err
-	}
-
-	if up.Dev.Keda {
-		keda.PauseKeda(app)
 	}
 
 	if v, ok := app.ObjectMeta().Annotations[model.OktetoAutoCreateAnnotation]; up.Dev.Autocreate && (!ok || v != model.OktetoUpCmd) {

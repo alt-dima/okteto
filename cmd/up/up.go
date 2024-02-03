@@ -45,6 +45,7 @@ import (
 	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/k8s/apps"
+	"github.com/okteto/okteto/pkg/keda"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
@@ -661,6 +662,10 @@ func (up *upContext) start() error {
 	up.analyticsMeta.ManifestProps(up.Manifest)
 	up.analyticsMeta.DevProps(up.Dev)
 	up.analyticsMeta.RepositoryProps(utils.IsOktetoRepo())
+
+	if up.Dev.Keda {
+		keda.PauseKeda(up.Dev)
+	}
 
 	go up.activateLoop()
 
