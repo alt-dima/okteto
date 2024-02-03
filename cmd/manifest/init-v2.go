@@ -72,7 +72,7 @@ type InitOpts struct {
 	AutoDeploy       bool
 	AutoConfigureDev bool
 
-	GuestyV1 bool
+	GuestyManifestV1 bool
 }
 
 // RunInitV2 initializes a new okteto manifest
