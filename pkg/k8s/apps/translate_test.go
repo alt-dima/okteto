@@ -22,12 +22,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/k8s/deployments"
 	"github.com/okteto/okteto/pkg/k8s/statefulsets"
 	"github.com/okteto/okteto/pkg/model"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	yaml "gopkg.in/yaml.v2"
 	appsv1 "k8s.io/api/apps/v1"
@@ -117,7 +116,7 @@ services:
 	d1.UID = types.UID("deploy1")
 	delete(d1.Annotations, model.OktetoAutoCreateAnnotation)
 	d1.Annotations[model.StateBeforeSleepingAnnontation] = "{\"Replicas\":3}"
-	d1.Spec.Replicas = pointer.Int32Ptr(2)
+	d1.Spec.Replicas = pointer.Int32(2)
 	d1.Spec.Strategy = appsv1.DeploymentStrategy{
 		Type: appsv1.RollingUpdateDeploymentStrategyType,
 	}
@@ -163,7 +162,7 @@ services:
 			FSGroup: &fsGroup,
 		},
 		ServiceAccountName:            "sa",
-		TerminationGracePeriodSeconds: pointer.Int64Ptr(0),
+		TerminationGracePeriodSeconds: pointer.Int64(0),
 		Volumes: []apiv1.Volume{
 			{
 				Name: oktetoSyncSecretVolume,
@@ -297,7 +296,7 @@ services:
 					{Name: "HISTCONTROL", Value: "ignoreboth:erasedups"},
 					{Name: "HISTFILE", Value: "/var/okteto/bashrc/.bash_history"},
 					{Name: "BASHOPTS", Value: "histappend"},
-					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r ; $PROMPT_COMMAND"},
+					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r"},
 				},
 				SecurityContext: &apiv1.SecurityContext{
 					RunAsUser:  &runAsUser,
@@ -467,7 +466,7 @@ services:
 	d2 := deployments.Sandbox(dev2)
 	d2.UID = types.UID("deploy2")
 	delete(d2.Annotations, model.OktetoAutoCreateAnnotation)
-	d2.Spec.Replicas = pointer.Int32Ptr(3)
+	d2.Spec.Replicas = pointer.Int32(3)
 	d2.Namespace = dev1.Namespace
 
 	translationRules := make(map[string]*Translation)
@@ -493,10 +492,10 @@ services:
 			},
 		},
 		SecurityContext: &apiv1.PodSecurityContext{
-			FSGroup: pointer.Int64Ptr(0),
+			FSGroup: pointer.Int64(0),
 		},
 		ServiceAccountName:            "",
-		TerminationGracePeriodSeconds: pointer.Int64Ptr(0),
+		TerminationGracePeriodSeconds: pointer.Int64(0),
 		Volumes: []apiv1.Volume{
 			{
 				Name: dev1.GetVolumeName(),
@@ -521,11 +520,11 @@ services:
 					{Name: "HISTCONTROL", Value: "ignoreboth:erasedups"},
 					{Name: "HISTFILE", Value: "/var/okteto/bashrc/.bash_history"},
 					{Name: "BASHOPTS", Value: "histappend"},
-					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r ; $PROMPT_COMMAND"},
+					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r"},
 				},
 				SecurityContext: &apiv1.SecurityContext{
-					RunAsUser:  pointer.Int64Ptr(0),
-					RunAsGroup: pointer.Int64Ptr(0),
+					RunAsUser:  pointer.Int64(0),
+					RunAsGroup: pointer.Int64(0),
 				},
 				VolumeMounts: []apiv1.VolumeMount{
 					{
@@ -684,7 +683,7 @@ services:
 	d2 := deployments.Sandbox(dev2)
 	d2.UID = types.UID("deploy2")
 	delete(d2.Annotations, model.OktetoAutoCreateAnnotation)
-	d2.Spec.Replicas = pointer.Int32Ptr(0)
+	d2.Spec.Replicas = pointer.Int32(0)
 	d2.Namespace = dev1.Namespace
 
 	translationRules := make(map[string]*Translation)
@@ -802,7 +801,7 @@ services:
 	d2 := deployments.Sandbox(dev2)
 	d2.UID = types.UID("deploy2")
 	delete(d2.Annotations, model.OktetoAutoCreateAnnotation)
-	d2.Spec.Replicas = pointer.Int32Ptr(3)
+	d2.Spec.Replicas = pointer.Int32(3)
 	d2.Namespace = dev1.Namespace
 
 	translationRules := make(map[string]*Translation)
@@ -874,7 +873,7 @@ persistentVolume:
 	}
 	require.NoError(t, tr.translate())
 	dDevPodOK := &apiv1.PodSpec{
-		TerminationGracePeriodSeconds: pointer.Int64Ptr(0),
+		TerminationGracePeriodSeconds: pointer.Int64(0),
 		Volumes: []apiv1.Volume{
 			{
 				Name: oktetoSyncSecretVolume,
@@ -991,10 +990,10 @@ func Test_translateResources(t *testing.T) {
 		r model.ResourceRequirements
 	}
 	tests := []struct {
-		name             string
 		args             args
 		expectedRequests map[apiv1.ResourceName]resource.Quantity
 		expectedLimits   map[apiv1.ResourceName]resource.Quantity
+		name             string
 	}{
 		{
 			name: "no-limits-in-yaml",
@@ -1250,11 +1249,11 @@ func Test_translateSecurityContextWithParams(t *testing.T) {
 	var falseB = false
 
 	pass_tests := []struct {
-		name                             string
 		c                                *apiv1.Container
 		s                                *model.SecurityContext
 		expectedRunAsNonRoot             *bool
 		expectedAllowPrivilegeEscalation *bool
+		name                             string
 	}{
 		{
 			name: "add_nonroot",
@@ -1468,7 +1467,7 @@ environment:
 		{Name: "HISTCONTROL", Value: "ignoreboth:erasedups"},
 		{Name: "HISTFILE", Value: "/var/okteto/bashrc/.bash_history"},
 		{Name: "BASHOPTS", Value: "histappend"},
-		{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r ; $PROMPT_COMMAND"},
+		{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r"},
 	}
 	if !reflect.DeepEqual(envOK, tr.DevApp.PodSpec().Containers[0].Env) {
 		t.Fatalf("Wrong env generation %+v", tr.DevApp.PodSpec().Containers[0].Env)
@@ -1542,7 +1541,7 @@ services:
 	sfs1 := statefulsets.Sandbox(dev1)
 	sfs1.UID = types.UID("sfs1")
 	delete(sfs1.Annotations, model.OktetoAutoCreateAnnotation)
-	sfs1.Spec.Replicas = pointer.Int32Ptr(2)
+	sfs1.Spec.Replicas = pointer.Int32(2)
 
 	rule1 := dev1.ToTranslationRule(dev1, false)
 	tr1 := &Translation{
@@ -1586,7 +1585,7 @@ services:
 			FSGroup: &fsGroup,
 		},
 		ServiceAccountName:            "sa",
-		TerminationGracePeriodSeconds: pointer.Int64Ptr(0),
+		TerminationGracePeriodSeconds: pointer.Int64(0),
 		Volumes: []apiv1.Volume{
 			{
 				Name: oktetoSyncSecretVolume,
@@ -1720,7 +1719,7 @@ services:
 					{Name: "HISTCONTROL", Value: "ignoreboth:erasedups"},
 					{Name: "HISTFILE", Value: "/var/okteto/bashrc/.bash_history"},
 					{Name: "BASHOPTS", Value: "histappend"},
-					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r ; $PROMPT_COMMAND"},
+					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r"},
 				},
 				SecurityContext: &apiv1.SecurityContext{
 					RunAsUser:  &runAsUser,
@@ -1871,7 +1870,7 @@ services:
 
 	dev2 := dev1.Services[0]
 	sfs2 := statefulsets.Sandbox(dev2)
-	sfs2.Spec.Replicas = pointer.Int32Ptr(3)
+	sfs2.Spec.Replicas = pointer.Int32(3)
 	sfs2.UID = types.UID("sfs2")
 	delete(sfs2.Annotations, model.OktetoAutoCreateAnnotation)
 	sfs2.Namespace = dev1.Namespace
@@ -1901,10 +1900,10 @@ services:
 			},
 		},
 		SecurityContext: &apiv1.PodSecurityContext{
-			FSGroup: pointer.Int64Ptr(0),
+			FSGroup: pointer.Int64(0),
 		},
 		ServiceAccountName:            "",
-		TerminationGracePeriodSeconds: pointer.Int64Ptr(0),
+		TerminationGracePeriodSeconds: pointer.Int64(0),
 		Volumes: []apiv1.Volume{
 			{
 				Name: dev1.GetVolumeName(),
@@ -1924,8 +1923,8 @@ services:
 				Command:         []string{"./run_worker.sh"},
 				Args:            []string{},
 				SecurityContext: &apiv1.SecurityContext{
-					RunAsUser:  pointer.Int64Ptr(0),
-					RunAsGroup: pointer.Int64Ptr(0),
+					RunAsUser:  pointer.Int64(0),
+					RunAsGroup: pointer.Int64(0),
 				},
 				Env: []apiv1.EnvVar{
 					{Name: "HISTSIZE", Value: "10000000"},
@@ -1933,7 +1932,7 @@ services:
 					{Name: "HISTCONTROL", Value: "ignoreboth:erasedups"},
 					{Name: "HISTFILE", Value: "/var/okteto/bashrc/.bash_history"},
 					{Name: "BASHOPTS", Value: "histappend"},
-					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r ; $PROMPT_COMMAND"},
+					{Name: "PROMPT_COMMAND", Value: "history -a ; history -c ; history -r"},
 				},
 				VolumeMounts: []apiv1.VolumeMount{
 					{
@@ -2111,8 +2110,8 @@ func Test_translateAnnotations(t *testing.T) {
 func Test_getDevName(t *testing.T) {
 	var tests = []struct {
 		name     string
-		tr       Translation
 		expected string
+		tr       Translation
 	}{
 		{
 			name: "missing name",

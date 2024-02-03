@@ -1,4 +1,4 @@
-// Copyright 2021 The Okteto Authors
+// Copyright 2023 The Okteto Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -225,8 +225,8 @@ func Test_removeSensitiveDataFromGitURL(t *testing.T) {
 func Test_translateVariables(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    []string
 		expected string
+		input    []string
 	}{
 		{
 			name:     "nil input",

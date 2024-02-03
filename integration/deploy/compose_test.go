@@ -174,13 +174,13 @@ func TestDeployPipelineFromCompose(t *testing.T) {
 	// Test that the nginx image has been created correctly
 	nginxDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "nginx", c)
 	require.NoError(t, err)
-	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(nginxImageDev), nginxDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the nginx image has been created correctly
 	appDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "app", c)
 	require.NoError(t, err)
-	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(appImageDev), appDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the k8s services has been created correctly
@@ -254,13 +254,13 @@ func TestReDeployPipelineFromCompose(t *testing.T) {
 	// Test that the nginx image has been created correctly
 	nginxDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "nginx", c)
 	require.NoError(t, err)
-	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(nginxImageDev), nginxDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the nginx image has been created correctly
 	appDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "app", c)
 	require.NoError(t, err)
-	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(appImageDev), appDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the k8s services has been created correctly
@@ -340,7 +340,7 @@ func TestDeployPipelineFromComposeOnlyOneSvc(t *testing.T) {
 	// Test that the nginx image has been created correctly
 	appDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "app", c)
 	require.NoError(t, err)
-	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(appImageDev), appDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	destroyOptions := &commands.DestroyOptions{
@@ -397,14 +397,14 @@ func TestDeployPipelineFromOktetoStacks(t *testing.T) {
 	nginxDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "nginx", c)
 	require.NoError(t, err)
 
-	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(nginxImageDev), nginxDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the app image has been created correctly
 	appDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "app", c)
 	require.NoError(t, err)
 
-	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	appImageDev := fmt.Sprintf("%s/%s/%s-app:okteto", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(appImageDev), appDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test endpoints are accessible
@@ -461,13 +461,13 @@ func TestDeployComposeFromOktetoManifest(t *testing.T) {
 	// Test that the nginx image has been created correctly
 	nginxDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "nginx", c)
 	require.NoError(t, err)
-	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.Context().Registry, testNamespace, filepath.Base(dir))
+	nginxImageDev := fmt.Sprintf("%s/%s/%s-nginx:okteto-with-volume-mounts", okteto.GetContext().Registry, testNamespace, filepath.Base(dir))
 	require.Equal(t, getImageWithSHA(nginxImageDev), nginxDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the nginx image has been created correctly
 	appDeployment, err := integration.GetDeployment(context.Background(), testNamespace, "app", c)
 	require.NoError(t, err)
-	appImageDev := fmt.Sprintf("%s/%s/app:okteto", okteto.Context().Registry, testNamespace)
+	appImageDev := fmt.Sprintf("%s/%s/app:okteto", okteto.GetContext().Registry, testNamespace)
 	require.Equal(t, getImageWithSHA(appImageDev), appDeployment.Spec.Template.Spec.Containers[0].Image)
 
 	// Test that the k8s services has been created correctly
@@ -536,7 +536,7 @@ services:
 	}
 	output, err := commands.GetOktetoDeployCmdOutput(oktetoPath, deployOptions)
 	require.Error(t, err)
-	require.Contains(t, strings.ToLower(string(output)), "invalid depends_on: service 'app' depends on service 'nginx' which is undefined.")
+	require.Contains(t, strings.ToLower(string(output)), "invalid depends_on: service 'app' depends on service 'nginx' which is undefined")
 
 	deployOptionsWithFile := &commands.DeployOptions{
 		Workdir:      dir,
@@ -547,7 +547,7 @@ services:
 	}
 	output, err = commands.GetOktetoDeployCmdOutput(oktetoPath, deployOptionsWithFile)
 	require.Error(t, err)
-	require.Contains(t, strings.ToLower(string(output)), "invalid depends_on: service 'app' depends on service 'nginx' which is undefined.")
+	require.Contains(t, strings.ToLower(string(output)), "invalid depends_on: service 'app' depends on service 'nginx' which is undefined")
 }
 
 func createComposeScenarioByManifest(dir string) error {

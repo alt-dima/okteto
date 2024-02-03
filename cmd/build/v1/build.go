@@ -17,22 +17,25 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-
-	"github.com/okteto/okteto/pkg/model"
+	"strings"
 
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/analytics"
-	"github.com/okteto/okteto/pkg/cmd/build"
+	buildCmd "github.com/okteto/okteto/pkg/cmd/build"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
-	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/filesystem"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
 	"github.com/okteto/okteto/pkg/types"
+	"github.com/spf13/afero"
 )
 
 // OktetoBuilderInterface runs the build of an image
 type OktetoBuilderInterface interface {
-	Run(ctx context.Context, buildOptions *types.BuildOptions) error
+	GetBuilder() string
+	Run(ctx context.Context, buildOptions *types.BuildOptions, ioCtrl *io.Controller) error
 }
 
 type oktetoRegistryInterface interface {
@@ -44,21 +47,28 @@ type oktetoRegistryInterface interface {
 type OktetoBuilder struct {
 	Builder  OktetoBuilderInterface
 	Registry oktetoRegistryInterface
+	IoCtrl   *io.Controller
 }
 
 // NewBuilder creates a new okteto builder
-func NewBuilder(builder OktetoBuilderInterface, registry oktetoRegistryInterface) *OktetoBuilder {
+func NewBuilder(builder OktetoBuilderInterface, registry oktetoRegistryInterface, ioCtrl *io.Controller) *OktetoBuilder {
 	return &OktetoBuilder{
 		Builder:  builder,
 		Registry: registry,
+		IoCtrl:   ioCtrl,
 	}
 }
 
 // NewBuilderFromScratch creates a new okteto builder
-func NewBuilderFromScratch() *OktetoBuilder {
-	builder := &build.OktetoBuilder{}
+func NewBuilderFromScratch(ioCtrl *io.Controller) *OktetoBuilder {
+	builder := &buildCmd.OktetoBuilder{
+		OktetoContext: &okteto.ContextStateless{
+			Store: okteto.GetContextStore(),
+		},
+		Fs: afero.NewOsFs(),
+	}
 	registry := registry.NewOktetoRegistry(okteto.Config{})
-	return NewBuilder(builder, registry)
+	return NewBuilder(builder, registry, ioCtrl)
 }
 
 // IsV1 returns true since it is a builder v1
@@ -67,7 +77,7 @@ func (*OktetoBuilder) IsV1() bool {
 }
 
 // Build builds the images defined by a Dockerfile
-func (bc *OktetoBuilder) Build(ctx context.Context, options *types.BuildOptions) error {
+func (ob *OktetoBuilder) Build(ctx context.Context, options *types.BuildOptions) error {
 	path := "."
 	if options.Path != "" {
 		path = options.Path
@@ -77,7 +87,7 @@ func (bc *OktetoBuilder) Build(ctx context.Context, options *types.BuildOptions)
 	}
 
 	if err := utils.CheckIfDirectory(path); err != nil {
-		return fmt.Errorf("invalid build context: %s", err.Error())
+		return fmt.Errorf("invalid build context: %w", err)
 	}
 	options.Path = path
 
@@ -85,37 +95,33 @@ func (bc *OktetoBuilder) Build(ctx context.Context, options *types.BuildOptions)
 		options.File = filepath.Join(path, "Dockerfile")
 	}
 
-	if err := utils.CheckIfRegularFile(options.File); err != nil {
-		return fmt.Errorf("%s: %s", oktetoErrors.InvalidDockerfile, err.Error())
-	}
-
-	buildMsg := fmt.Sprintf("Building '%s'", options.File)
-	if okteto.Context().Builder == "" {
-		oktetoLog.Information("%s using your local docker daemon", buildMsg)
-	} else {
-		oktetoLog.Information("%s in %s...", buildMsg, okteto.Context().Builder)
+	if exists := filesystem.FileExistsAndNotDir(options.File, afero.NewOsFs()); !exists {
+		return fmt.Errorf("%s: '%s' is not a regular file", oktetoErrors.InvalidDockerfile, options.File)
 	}
 
 	var err error
-	options.Tag, err = model.ExpandEnv(options.Tag, true)
+	options.Tag, err = env.ExpandEnv(options.Tag)
 	if err != nil {
 		return err
 	}
 
-	if err := bc.Builder.Run(ctx, options); err != nil {
+	if err := ob.Builder.Run(ctx, options, ob.IoCtrl); err != nil {
 		analytics.TrackBuild(false)
 		return err
 	}
 
 	if options.Tag == "" {
-		oktetoLog.Success("Build succeeded")
-		oktetoLog.Information("Your image won't be pushed. To push your image specify the flag '-t'.")
+		ob.IoCtrl.Out().Success("Build succeeded")
+		ob.IoCtrl.Out().Infof("Your image won't be pushed. To push your image specify the flag '-t'.")
 	} else {
-		displayTag := options.Tag
-		if options.DevTag != "" {
-			displayTag = options.DevTag
+		tags := strings.Split(options.Tag, ",")
+		for _, tag := range tags {
+			displayTag := tag
+			if options.DevTag != "" {
+				displayTag = options.DevTag
+			}
+			ob.IoCtrl.Out().Success("Image '%s' successfully pushed", displayTag)
 		}
-		oktetoLog.Success(fmt.Sprintf("Image '%s' successfully pushed", displayTag))
 	}
 
 	analytics.TrackBuild(true)

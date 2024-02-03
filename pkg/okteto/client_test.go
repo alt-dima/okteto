@@ -16,11 +16,10 @@ package okteto
 import (
 	"context"
 	"crypto/tls"
+	"net/http"
 	"os"
 	"reflect"
 	"testing"
-
-	"net/http"
 
 	"github.com/okteto/okteto/pkg/constants"
 	"golang.org/x/oauth2"
@@ -172,8 +171,8 @@ func Test_parseOktetoURL(t *testing.T) {
 
 func TestBackgroundContextWithHttpClient(t *testing.T) {
 	tests := []struct {
-		name       string
 		httpClient *http.Client
+		name       string
 		expected   bool
 	}{
 		{

@@ -65,20 +65,19 @@ var (
 )
 
 type logger struct {
+	writer OktetoWriter
 	out    *logrus.Logger
 	file   *logrus.Entry
-	writer OktetoWriter
+
+	buf      *bytes.Buffer
+	replacer *strings.Replacer
+	spinner  *spinnerLogger
 
 	stage      string
 	outputMode string
 
-	buf *bytes.Buffer
-
 	maskedWords []string
 	isMasked    bool
-	replacer    *strings.Replacer
-
-	spinner *spinnerLogger
 }
 
 var log = &logger{
@@ -164,6 +163,7 @@ func SetOutput(output io.Writer) {
 // SetOutputFormat sets the output format
 func SetOutputFormat(format string) {
 	log.writer = log.getWriter(format)
+	log.spinner.spinnerSupport = !loadBool(OktetoDisableSpinnerEnvVar) && IsInteractive()
 }
 
 // GetOutputWriter sets the output format

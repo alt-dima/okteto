@@ -21,8 +21,9 @@ import (
 	"testing"
 
 	"github.com/okteto/okteto/internal/test"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
-	"github.com/okteto/okteto/pkg/okteto"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -62,20 +63,13 @@ func (fr fakeRegistry) HasGlobalPushAccess() (bool, error) { return false, nil }
 
 func TestBuildWithErrorFromDockerfile(t *testing.T) {
 	ctx := context.Background()
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": {
-				Namespace: "test",
-			},
-		},
-		CurrentContext: "test",
-	}
 
 	registry := newFakeRegistry()
 	builder := test.NewFakeOktetoBuilder(registry, fmt.Errorf("failed to build error"))
 	bc := &OktetoBuilder{
 		Builder:  builder,
 		Registry: registry,
+		IoCtrl:   io.NewIOController(),
 	}
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
@@ -97,20 +91,13 @@ func TestBuildWithErrorFromDockerfile(t *testing.T) {
 
 func TestBuildWithErrorFromImageExpansion(t *testing.T) {
 	ctx := context.Background()
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": {
-				Namespace: "test",
-			},
-		},
-		CurrentContext: "test",
-	}
 
 	registry := newFakeRegistry()
 	builder := test.NewFakeOktetoBuilder(registry)
 	bc := &OktetoBuilder{
 		Builder:  builder,
 		Registry: registry,
+		IoCtrl:   io.NewIOController(),
 	}
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
@@ -124,8 +111,7 @@ func TestBuildWithErrorFromImageExpansion(t *testing.T) {
 	}
 	err = bc.Build(ctx, options)
 	// error from the build
-	expectedErr := fmt.Errorf("error expanding environment on 'okteto.dev/test:${TEST_VAR': closing brace expected")
-	assert.Equal(t, err, expectedErr)
+	assert.ErrorAs(t, err, &env.VarExpansionErr{})
 	// the image is not at the fake registry
 	image, err := bc.Registry.GetImageTagWithDigest(options.Tag)
 	assert.ErrorIs(t, err, oktetoErrors.ErrNotFound)
@@ -134,20 +120,13 @@ func TestBuildWithErrorFromImageExpansion(t *testing.T) {
 
 func TestBuildWithNoErrorFromDockerfile(t *testing.T) {
 	ctx := context.Background()
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": {
-				Namespace: "test",
-			},
-		},
-		CurrentContext: "test",
-	}
 
 	registry := newFakeRegistry()
 	builder := test.NewFakeOktetoBuilder(registry)
 	bc := &OktetoBuilder{
 		Builder:  builder,
 		Registry: registry,
+		IoCtrl:   io.NewIOController(),
 	}
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
@@ -169,20 +148,13 @@ func TestBuildWithNoErrorFromDockerfile(t *testing.T) {
 
 func TestBuildWithNoErrorFromDockerfileAndNoTag(t *testing.T) {
 	ctx := context.Background()
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": {
-				Namespace: "test",
-			},
-		},
-		CurrentContext: "test",
-	}
 
 	registry := newFakeRegistry()
 	builder := test.NewFakeOktetoBuilder(registry)
 	bc := &OktetoBuilder{
 		Builder:  builder,
 		Registry: registry,
+		IoCtrl:   io.NewIOController(),
 	}
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)

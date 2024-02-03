@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/okteto/okteto/pkg/constants"
@@ -40,11 +41,12 @@ func (frg *fakeRepositoryGetter) get(_ string) (gitRepositoryInterface, error) {
 }
 
 type fakeRepository struct {
+	err          error
 	worktree     *fakeWorktree
 	head         *plumbing.Reference
-	commit       *fakeCommit
+	commit       string
+	diff         string
 	failInCommit bool
-	err          error
 }
 
 func (fr fakeRepository) Worktree() (gitWorktreeInterface, error) {
@@ -57,39 +59,42 @@ func (fr fakeRepository) Head() (*plumbing.Reference, error) {
 	return fr.head, fr.err
 }
 
-func (fr fakeRepository) CommitObject(plumbing.Hash) (gitCommitInterface, error) {
+func (fr fakeRepository) GetLatestCommit(context.Context, string, string, LocalGitInterface) (string, error) {
 	return fr.commit, fr.err
 }
 
+func (fr fakeRepository) Log(logOpts *git.LogOptions) (object.CommitIter, error) {
+	return nil, nil
+}
+
+func (fr fakeRepository) GetDiff(ctx context.Context, repoPath, dirpath string, localGit LocalGitInterface) (string, error) {
+	return fr.diff, fr.err
+}
+
+func (fr fakeRepository) calculateUntrackedFiles(ctx context.Context, contextDir string) ([]string, error) {
+	return []string{}, fr.err
+}
+
 type fakeWorktree struct {
+	err    error
 	status oktetoGitStatus
 	root   string
-	err    error
 }
 
 func (fw fakeWorktree) GetRoot() string {
 	return fw.root
 }
 
-func (fw fakeWorktree) Status(context.Context, LocalGitInterface) (oktetoGitStatus, error) {
+func (fw fakeWorktree) Status(context.Context, string, LocalGitInterface) (oktetoGitStatus, error) {
 	return fw.status, fw.err
-}
-
-type fakeCommit struct {
-	tree *object.Tree
-	err  error
-}
-
-func (fc *fakeCommit) Tree() (*object.Tree, error) {
-	return fc.tree, fc.err
 }
 
 func TestNewRepo(t *testing.T) {
 	tt := []struct {
+		expectedControl repositoryInterface
 		name            string
 		GitCommit       string
 		remoteDeploy    string
-		expectedControl repositoryInterface
 	}{
 		{
 			name:      "GitCommit is empty",
@@ -117,7 +122,7 @@ func TestNewRepo(t *testing.T) {
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(constants.OktetoGitCommitEnvVar, tc.GitCommit)
-			t.Setenv(constants.OktetoDeployRemote, string(tc.remoteDeploy))
+			t.Setenv(constants.OktetoDeployRemote, tc.remoteDeploy)
 			r := NewRepository("https://my-repo/okteto/okteto")
 			assert.Equal(t, "/okteto/okteto", r.url.Path)
 			assert.IsType(t, tc.expectedControl, r.control)

@@ -19,14 +19,13 @@ import (
 	"fmt"
 	"strings"
 
+	dockertypes "github.com/docker/cli/cli/config/types"
+	dockercredentials "github.com/docker/docker-credential-helpers/credentials"
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/shurcooL/graphql"
 	"gopkg.in/yaml.v3"
-
-	dockertypes "github.com/docker/cli/cli/config/types"
-	dockercredentials "github.com/docker/docker-credential-helpers/credentials"
 )
 
 type userClient struct {
@@ -38,9 +37,9 @@ func newUserClient(client graphqlClientInterface) *userClient {
 }
 
 type getContextQuery struct {
+	Cred    credQuery     `graphql:"credentials(space: $cred)"`
 	User    userQuery     `graphql:"user"`
 	Secrets []secretQuery `graphql:"getGitDeploySecrets"`
-	Cred    credQuery     `graphql:"credentials(space: $cred)"`
 }
 
 type getSecretsQuery struct {
@@ -53,8 +52,8 @@ type getContextFileQuery struct {
 
 type getDeprecatedContextQuery struct {
 	User    deprecatedUserQuery `graphql:"user"`
-	Secrets []secretQuery       `graphql:"getGitDeploySecrets"`
 	Cred    credQuery           `graphql:"credentials(space: $cred)"`
+	Secrets []secretQuery       `graphql:"getGitDeploySecrets"`
 }
 
 type getRegistryCredentialsQuery struct {
@@ -68,11 +67,11 @@ type userQuery struct {
 	Email           graphql.String
 	ExternalID      graphql.String `graphql:"externalID"`
 	Token           graphql.String
-	New             graphql.Boolean
 	Registry        graphql.String
 	Buildkit        graphql.String
 	Certificate     graphql.String
-	GlobalNamespace graphql.String  `graphql:"globalNamespace"`
+	GlobalNamespace graphql.String `graphql:"globalNamespace"`
+	New             graphql.Boolean
 	Analytics       graphql.Boolean `graphql:"telemetryEnabled"`
 }
 
@@ -84,10 +83,10 @@ type deprecatedUserQuery struct {
 	Email       graphql.String
 	ExternalID  graphql.String `graphql:"externalID"`
 	Token       graphql.String
-	New         graphql.Boolean
 	Registry    graphql.String
 	Buildkit    graphql.String
 	Certificate graphql.String
+	New         graphql.Boolean
 }
 
 type secretQuery struct {
@@ -322,6 +321,10 @@ func (c *userClient) GetClusterMetadata(ctx context.Context, ns string) (types.C
 			metadata.IsTrialLicense = string(v.Value) == "true"
 		case "companyName":
 			metadata.CompanyName = string(v.Value)
+		case "buildkitInternalIP":
+			metadata.BuildKitInternalIP = string(v.Value)
+		case "publicDomain":
+			metadata.PublicDomain = string(v.Value)
 		}
 	}
 	if metadata.PipelineRunnerImage == "" {

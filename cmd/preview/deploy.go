@@ -46,10 +46,10 @@ type DeployOptions struct {
 	repository         string
 	scope              string
 	sourceUrl          string
-	timeout            time.Duration
 	variables          []string
-	wait               bool
 	labels             []string
+	timeout            time.Duration
+	wait               bool
 }
 
 // Deploy Deploy a preview environment
@@ -69,10 +69,10 @@ func Deploy(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.ContextOptions{}); err != nil {
+			if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.Options{}); err != nil {
 				return err
 			}
-			oktetoLog.Information("Using %s @ %s as context", opts.name, okteto.RemoveSchema(okteto.Context().Name))
+			oktetoLog.Information("Using %s @ %s as context", opts.name, okteto.RemoveSchema(okteto.GetContext().Name))
 
 			if !okteto.IsOkteto() {
 				return oktetoErrors.ErrContextIsNotOktetoCluster
@@ -129,8 +129,9 @@ func (pw *Command) deployPreview(ctx context.Context, opts *DeployOptions) (*typ
 
 	var varList []types.Variable
 	for _, v := range opts.variables {
-		kv := strings.SplitN(v, "=", 2)
-		if len(kv) != 2 {
+		variableFormatParts := 2
+		kv := strings.SplitN(v, "=", variableFormatParts)
+		if len(kv) != variableFormatParts {
 			return nil, fmt.Errorf("invalid variable value '%s': must follow KEY=VALUE format", v)
 		}
 		varList = append(varList, types.Variable{

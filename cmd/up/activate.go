@@ -53,12 +53,7 @@ func (up *upContext) activate() error {
 	up.Sy = nil
 	up.Forwarder = nil
 	defer func() {
-		if up.Dev.IsHybridModeEnabled() {
-			// interrupt signal handler already performs a graceful shutdown
-			if !up.interruptReceived {
-				up.shutdown()
-			}
-		} else {
+		if !up.interruptReceived {
 			up.shutdown()
 		}
 	}()
@@ -68,7 +63,7 @@ func (up *upContext) activate() error {
 	up.bootstraped = make(chan string, 1)
 	up.hardTerminate = make(chan error, 1)
 
-	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}
@@ -107,7 +102,7 @@ func (up *upContext) activate() error {
 	buildDevImage := false
 	if _, err := up.Registry.GetImageTagWithDigest(up.Dev.Image.Name); err == oktetoErrors.ErrNotFound {
 		oktetoLog.Infof("image '%s' not found, building it: %s", up.Dev.Image.Name, err.Error())
-		path := up.Dev.Image.GetDockerfilePath()
+		path := up.Dev.Image.GetDockerfilePath(up.Fs)
 		if _, err := os.Stat(path); err != nil {
 			return oktetoErrors.UserError{
 				E:    fmt.Errorf("the image '%s' doesn't exist and Dockerfile '%s' is not accessible", up.Dev.Image.Name, path),
@@ -119,7 +114,7 @@ func (up *upContext) activate() error {
 
 	if !up.isRetry && buildDevImage {
 		if err := up.buildDevImage(ctx, app); err != nil {
-			return fmt.Errorf("error building dev image: %s", err)
+			return fmt.Errorf("error building dev image: %w", err)
 		}
 	}
 
@@ -150,7 +145,7 @@ func (up *upContext) activate() error {
 		if _, ok := err.(oktetoErrors.UserError); ok {
 			return err
 		}
-		return fmt.Errorf("couldn't activate your development container\n    %s", err.Error())
+		return fmt.Errorf("couldn't activate your development container\n    %w", err)
 	}
 
 	if up.isRetry {
@@ -168,12 +163,12 @@ func (up *upContext) activate() error {
 			err := up.checkOktetoStartError(ctx, "Failed to connect to your development container")
 			if err == oktetoErrors.ErrLostSyncthing {
 				if err := pods.Destroy(ctx, up.Pod.Name, up.Dev.Namespace, k8sClient); err != nil {
-					return fmt.Errorf("error recreating development container: %s", err.Error())
+					return fmt.Errorf("error recreating development container: %w", err)
 				}
 			}
 			return err
 		}
-		return fmt.Errorf("couldn't connect to your development container: %s", err.Error())
+		return fmt.Errorf("couldn't connect to your development container: %w", err)
 	}
 	go up.bootstrapCommand(ctx, up.Dev.BootstrapCommand)
 
@@ -193,7 +188,8 @@ func (up *upContext) activate() error {
 
 		outByCommand := strings.Split(strings.TrimSpace(output), "\n")
 		var version, watches string
-		if len(outByCommand) >= 3 {
+		minOutCmdParts := 3
+		if len(outByCommand) >= minOutCmdParts {
 			version, watches = outByCommand[0], outByCommand[1]
 
 			if isWatchesConfigurationTooLow(watches) {
@@ -276,7 +272,7 @@ func (up *upContext) createDevContainer(ctx context.Context, app apps.App, creat
 		return err
 	}
 
-	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}
@@ -353,7 +349,7 @@ func (up *upContext) waitUntilDevelopmentContainerIsRunning(ctx context.Context,
 	oktetoLog.StartSpinner()
 	defer oktetoLog.StopSpinner()
 
-	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}
@@ -445,6 +441,10 @@ func (up *upContext) waitUntilDevelopmentContainerIsRunning(ctx context.Context,
     More information about configuring your persistent volume at https://okteto.com/docs/reference/manifest/#persistentvolume-object-optional`, utils.GetDownCommand(up.Options.ManifestPathFlag)),
 					}
 				}
+				if e.Type == "Warning" && strings.Contains(e.Message, "container veth name provided (eth0) already exists") {
+					oktetoLog.Infof("pod event: %s:%s:%s", e.Reason, e.Type, e.Message)
+					continue
+				}
 				return fmt.Errorf(e.Message)
 			case "SuccessfulAttachVolume":
 				failedSchedulingEvent = nil
@@ -503,7 +503,7 @@ func (up *upContext) waitUntilDevelopmentContainerIsRunning(ctx context.Context,
 }
 
 func getPullingMessage(message, namespace string) string {
-	registry := okteto.Context().Registry
+	registry := okteto.GetContext().Registry
 	if registry == "" {
 		return message
 	}
@@ -518,7 +518,7 @@ func (up *upContext) waitUntilAppIsAwaken(ctx context.Context, app apps.App) err
 		return nil
 	}
 
-	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.Context().Cfg)
+	k8sClient, _, err := up.K8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}

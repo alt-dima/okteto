@@ -14,7 +14,6 @@
 package context
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -23,40 +22,27 @@ import (
 )
 
 var (
-	cloudOption = fmt.Sprintf("%s (Okteto Cloud)", okteto.CloudURL)
-	newOEOption = "Create new context"
+	newOEOption = "Add new context"
 )
 
-func getContextsSelection(ctxOptions *ContextOptions) []utils.SelectorItem {
+func getAvailableContexts(ctxOptions *Options) []utils.SelectorItem {
 	k8sClusters := make([]string, 0)
 	if !ctxOptions.OnlyOkteto {
 		k8sClusters = getKubernetesContextList(true)
 	}
 	clusters := make([]utils.SelectorItem, 0)
 
-	clusters = append(clusters, utils.SelectorItem{Name: okteto.CloudURL, Label: cloudOption, Enable: true})
 	clusters = append(clusters, getOktetoClusters(true)...)
 	if len(k8sClusters) > 0 {
 		clusters = append(clusters, getK8sClusters(k8sClusters)...)
 	}
-	clusters = append(clusters, []utils.SelectorItem{
-		{
-			Label:  "",
-			Enable: false,
-		},
-		{
-			Name:   newOEOption,
-			Label:  newOEOption,
-			Enable: true,
-		},
-	}...)
 
 	return clusters
 }
 
 func getOktetoClusters(skipCloud bool) []utils.SelectorItem {
 	orderedOktetoClusters := make([]utils.SelectorItem, 0)
-	ctxStore := okteto.ContextStore()
+	ctxStore := okteto.GetContextStore()
 	for ctxName, okCtx := range ctxStore.Contexts {
 		if !okCtx.IsOkteto {
 			continue
@@ -100,7 +86,7 @@ func getK8sClusters(k8sClusters []string) []utils.SelectorItem {
 }
 
 func getInitialPosition(options []utils.SelectorItem) int {
-	currentContext := okteto.ContextStore().CurrentContext
+	currentContext := okteto.GetContextStore().CurrentContext
 	for indx, item := range options {
 		if item.Enable && item.Name == currentContext {
 			return indx

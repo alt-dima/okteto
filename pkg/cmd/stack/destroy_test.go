@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/k8s/deployments"
 	"github.com/okteto/okteto/pkg/k8s/jobs"
 	"github.com/okteto/okteto/pkg/k8s/statefulsets"
@@ -41,8 +42,8 @@ func Test_destroyDeployments(t *testing.T) {
 
 	client := fake.NewSimpleClientset(dep)
 	var tests = []struct {
-		name                string
 		stack               *model.Stack
+		name                string
 		expectedDeployments int
 	}{
 		{
@@ -119,8 +120,8 @@ func Test_destroyStatefulsets(t *testing.T) {
 
 	client := fake.NewSimpleClientset(sfs)
 	var tests = []struct {
-		name                string
 		stack               *model.Stack
+		name                string
 		expectedDeployments int
 	}{
 		{
@@ -132,7 +133,7 @@ func Test_destroyStatefulsets(t *testing.T) {
 					"test": {
 						Image:         "test_image",
 						RestartPolicy: corev1.RestartPolicyAlways,
-						Volumes: []model.StackVolume{
+						Volumes: []build.VolumeMounts{
 							{
 								LocalPath:  "/",
 								RemotePath: "/",
@@ -152,7 +153,7 @@ func Test_destroyStatefulsets(t *testing.T) {
 					"test-2": {
 						Image:         "test_image",
 						RestartPolicy: corev1.RestartPolicyAlways,
-						Volumes: []model.StackVolume{
+						Volumes: []build.VolumeMounts{
 							{
 								LocalPath:  "/",
 								RemotePath: "/",
@@ -209,8 +210,8 @@ func Test_destroyJobs(t *testing.T) {
 
 	client := fake.NewSimpleClientset(job)
 	var tests = []struct {
-		name                string
 		stack               *model.Stack
+		name                string
 		expectedDeployments int
 	}{
 		{

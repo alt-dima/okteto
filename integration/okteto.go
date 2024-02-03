@@ -50,7 +50,7 @@ func GetOktetoPath() (string, error) {
 	}
 	output, err := RunOktetoVersion(oktetoPath)
 	if err != nil {
-		return "", fmt.Errorf("okteto version failed: %s - %s", string(output), err)
+		return "", fmt.Errorf("okteto version failed: %s - %w", output, err)
 	}
 	log.Println(output)
 	return oktetoPath, nil
@@ -62,7 +62,7 @@ func GetToken() string {
 	if v := os.Getenv(model.OktetoTokenEnvVar); v != "" {
 		token = v
 	} else {
-		token = okteto.Context().Token
+		token = okteto.GetContext().Token
 	}
 	return token
 }
@@ -74,7 +74,7 @@ func RunOktetoVersion(oktetoPath string) (string, error) {
 
 	o, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("okteto version failed: %s - %s", string(o), err)
+		return "", fmt.Errorf("okteto version failed: %s - %w", string(o), err)
 	}
 	return string(o), nil
 }
@@ -115,7 +115,7 @@ func GetContentFromURL(url string, timeout time.Duration) string {
 			}
 
 			defer r.Body.Close()
-			if r.StatusCode != 200 {
+			if r.StatusCode != http.StatusOK {
 				if retry%10 == 0 {
 					log.Printf("called %s, got status %d, retrying", url, r.StatusCode)
 				}
@@ -149,7 +149,7 @@ func SkipIfWindows(t *testing.T) {
 
 // SkipIfNotOktetoCluster skips a tests if is not on an okteto cluster
 func SkipIfNotOktetoCluster(t *testing.T) {
-	if !okteto.Context().IsOkteto {
+	if !okteto.GetContext().IsOkteto {
 		t.Skip("Skipping because is not on an okteto cluster")
 	}
 }

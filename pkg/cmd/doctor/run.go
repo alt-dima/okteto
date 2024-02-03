@@ -23,12 +23,15 @@ import (
 	"time"
 
 	"github.com/mholt/archiver/v3"
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/config"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/filesystem"
 	"github.com/okteto/okteto/pkg/k8s/apps"
 	"github.com/okteto/okteto/pkg/k8s/pods"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/model/forward"
 	"github.com/okteto/okteto/pkg/syncthing"
@@ -106,9 +109,15 @@ func Run(ctx context.Context, dev *model.Dev, devPath string, c *kubernetes.Clie
 	if remoteLogsPath != "" {
 		files = append(files, remoteLogsPath)
 	}
+
+	k8sLogsPath := io.GetK8sLoggerFilePath(config.GetOktetoHome())
+	if filesystem.FileExists(k8sLogsPath) {
+		files = append(files, k8sLogsPath)
+	}
+
 	if err := z.Archive(files, archiveName); err != nil {
 		oktetoLog.Infof("error while archiving: %s", err)
-		return "", fmt.Errorf("couldn't create archive '%s', please try again: %s", archiveName, err)
+		return "", fmt.Errorf("couldn't create archive '%s', please try again: %w", archiveName, err)
 	}
 
 	return archiveName, nil
@@ -117,7 +126,7 @@ func Run(ctx context.Context, dev *model.Dev, devPath string, c *kubernetes.Clie
 func generateSummaryFile() (string, error) {
 	tempdir, err := os.MkdirTemp("", "")
 	if err != nil {
-		return "", fmt.Errorf("error creating temp dir: %s", err)
+		return "", fmt.Errorf("error creating temp dir: %w", err)
 	}
 	summaryPath := filepath.Join(tempdir, "okteto-summary.txt")
 	fileSummary, err := os.OpenFile(summaryPath, os.O_RDWR|os.O_CREATE, 0600)
@@ -174,9 +183,9 @@ func generateManifestFile(devPath string) (string, error) {
 	}
 
 	dev := &model.Dev{
-		Image:       &model.BuildInfo{},
-		Push:        &model.BuildInfo{},
-		Environment: make([]model.EnvVar, 0),
+		Image:       &build.Info{},
+		Push:        &build.Info{},
+		Environment: make([]env.Var, 0),
 		Secrets:     make([]model.Secret, 0),
 		Forward:     make([]forward.Forward, 0),
 		Volumes:     make([]model.Volume, 0),
@@ -301,7 +310,7 @@ func generateRemoteSyncthingLogsFile(ctx context.Context, dev *model.Dev, c *kub
 
 	tempdir, err := os.MkdirTemp("", "")
 	if err != nil {
-		return "", fmt.Errorf("error creating temp dir: %s", err)
+		return "", fmt.Errorf("error creating temp dir: %w", err)
 	}
 	remoteLogsPath := filepath.Join(tempdir, "remote-syncthing.log")
 	fileRemoteLog, err := os.OpenFile(remoteLogsPath, os.O_RDWR|os.O_CREATE, 0600)

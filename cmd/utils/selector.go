@@ -47,14 +47,12 @@ type OktetoSelectorInterface interface {
 
 // OktetoSelector implements the OktetoSelectorInterface
 type OktetoSelector struct {
-	Label string
-	Items []SelectorItem
-	Size  int
-
-	Templates *promptui.SelectTemplates
-	Keys      *promptui.SelectKeys
-
+	Templates       *promptui.SelectTemplates
+	Keys            *promptui.SelectKeys
 	OktetoTemplates *oktetoTemplates
+	Label           string
+	Items           []SelectorItem
+	Size            int
 }
 
 // oktetoTemplates stores the templates to render the text
@@ -453,8 +451,8 @@ func (s *OktetoSelector) renderHelp() []byte {
 		PrevKey     string
 		PageDownKey string
 		PageUpKey   string
-		Search      bool
 		SearchKey   string
+		Search      bool
 	}{
 		NextKey:     s.Keys.Next.Display,
 		PrevKey:     s.Keys.Prev.Display,
@@ -509,7 +507,8 @@ func getActiveTemplate() string {
 }
 
 func getInactiveTemplate() string {
-	whitespaces := strings.Repeat(" ", 2)
+	numOfSpaces := 2
+	whitespaces := strings.Repeat(" ", numOfSpaces)
 	result := fmt.Sprintf("{{if .Enable}}%s{{ .Label }}{{else}}%s{{ .Label }}{{end}}", whitespaces, whitespaces)
 	result = changeColorForWindows(result)
 	return result

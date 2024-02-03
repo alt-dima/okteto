@@ -19,24 +19,25 @@ import (
 	"os"
 	"strings"
 
+	giturls "github.com/chainguard-dev/git-urls"
 	"github.com/okteto/okteto/pkg/constants"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
-	giturls "github.com/whilp/git-urls"
 )
 
 // Repository is the struct to check everything related to Git Repo
 // like checking the commit or if the project has changes over it
 type Repository struct {
-	path string
-	url  *repositoryURL
-
 	control repositoryInterface
+
+	url  *repositoryURL
+	path string
 }
 
 type repositoryInterface interface {
 	isClean(ctx context.Context) (bool, error)
 	getSHA() (string, error)
-	getTreeSHA(string) (string, error)
+	GetLatestDirCommit(string) (string, error)
+	GetDiffHash(string) (string, error)
 }
 
 type repositoryURL struct {
@@ -65,7 +66,7 @@ func getURLFromPath(path string) repositoryURL {
 func NewRepository(path string) Repository {
 	repoURL := getURLFromPath(path)
 
-	var controller repositoryInterface = newGitRepoController()
+	var controller repositoryInterface = newGitRepoController(path)
 	// check if we are inside a remote deploy
 	if v := os.Getenv(constants.OktetoDeployRemote); v != "" {
 		sha := os.Getenv(constants.OktetoGitCommitEnvVar)
@@ -115,6 +116,10 @@ func (r Repository) GetAnonymizedRepo() string {
 	return r.url.String()
 }
 
-func (r Repository) GetTreeHash(buildContext string) (string, error) {
-	return r.control.getTreeSHA(buildContext)
+func (r Repository) GetLatestDirCommit(dir string) (string, error) {
+	return r.control.GetLatestDirCommit(dir)
+}
+
+func (r Repository) GetDiffHash(dir string) (string, error) {
+	return r.control.GetDiffHash(dir)
 }

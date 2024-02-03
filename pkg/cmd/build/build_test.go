@@ -1,3 +1,16 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package build
 
 import (
@@ -10,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/okteto/okteto/pkg/build"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
@@ -21,20 +35,22 @@ import (
 )
 
 func Test_validateImage(t *testing.T) {
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": {
-				Namespace: "test",
-				Registry:  "this.is.my.okteto.registry",
-				IsOkteto:  true,
+	okCtx := &okteto.ContextStateless{
+		Store: &okteto.ContextStore{
+			Contexts: map[string]*okteto.Context{
+				"test": {
+					Namespace: "test",
+					IsOkteto:  true,
+					Registry:  "test",
+				},
 			},
+			CurrentContext: "test",
 		},
-		CurrentContext: "test",
 	}
 	tests := []struct {
+		want  error
 		name  string
 		image string
-		want  error
 	}{
 		{
 			name:  "okteto-dev-valid",
@@ -64,7 +80,7 @@ func Test_validateImage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := validateImage(tt.image); reflect.TypeOf(got) != reflect.TypeOf(tt.want) {
+			if got := validateImage(okCtx, tt.image); reflect.TypeOf(got) != reflect.TypeOf(tt.want) {
 				t.Errorf("build.validateImage = %v, want %v", reflect.TypeOf(got), reflect.TypeOf(tt.want))
 			}
 		})
@@ -72,11 +88,11 @@ func Test_validateImage(t *testing.T) {
 }
 
 type mockRegistry struct {
-	isGlobal         bool
-	isOktetoRegistry bool
 	registry         string
 	repo             string
 	tag              string
+	isGlobal         bool
+	isOktetoRegistry bool
 }
 
 func (*mockRegistry) HasGlobalPushAccess() (bool, error) {
@@ -100,20 +116,13 @@ func (mr *mockRegistry) GetRepoNameAndTag(_ string) (string, string) {
 }
 
 func Test_OptsFromBuildInfo(t *testing.T) {
-	context := okteto.OktetoContext{
+	context := okteto.Context{
 		Namespace: "test",
 		Registry:  "registry.okteto",
 	}
 
-	namespaceEnvVar := model.BuildArg{
+	namespaceEnvVar := build.Arg{
 		Name: model.OktetoNamespaceEnvVar, Value: context.Namespace,
-	}
-
-	okteto.CurrentStore = &okteto.OktetoContextStore{
-		Contexts: map[string]*okteto.OktetoContext{
-			"test": &context,
-		},
-		CurrentContext: "test",
 	}
 
 	serviceContext := "service"
@@ -142,18 +151,18 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name        string
-		serviceName string
-		buildInfo   *model.BuildInfo
-		isOkteto    bool
-		mr          mockRegistry
+		buildInfo   *build.Info
 		initialOpts *types.BuildOptions
 		expected    *types.BuildOptions
+		name        string
+		serviceName string
+		mr          mockRegistry
+		isOkteto    bool
 	}{
 		{
 			name:        "is-okteto-empty-buildInfo",
 			serviceName: "service",
-			buildInfo:   &model.BuildInfo{},
+			buildInfo:   &build.Info{},
 			mr: mockRegistry{
 				isOktetoRegistry: true,
 				registry:         "okteto.dev",
@@ -169,7 +178,7 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "not-okteto-empty-buildInfo",
 			serviceName: "service",
-			buildInfo:   &model.BuildInfo{},
+			buildInfo:   &build.Info{},
 			isOkteto:    false,
 			expected: &types.BuildOptions{
 				OutputMode: oktetoLog.TTYFormat,
@@ -179,12 +188,12 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "is-okteto-missing-image-buildInfo",
 			serviceName: "service",
-			buildInfo: &model.BuildInfo{
+			buildInfo: &build.Info{
 				Context:    serviceContext,
 				Dockerfile: serviceDockerfile,
 				Target:     "build",
 				CacheFrom:  []string{"cache-image"},
-				Args: model.BuildArgs{
+				Args: build.Args{
 					{
 						Name:  "arg1",
 						Value: "value1",
@@ -213,18 +222,18 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "is-okteto-missing-image-buildInfo-with-volumes",
 			serviceName: "service",
-			buildInfo: &model.BuildInfo{
+			buildInfo: &build.Info{
 				Context:    serviceContext,
 				Dockerfile: serviceDockerfile,
 				Target:     "build",
 				CacheFrom:  []string{"cache-image"},
-				Args: model.BuildArgs{
+				Args: build.Args{
 					{
 						Name:  "arg1",
 						Value: "value1",
 					},
 				},
-				VolumesToInclude: []model.StackVolume{
+				VolumesToInclude: []build.VolumeMounts{
 					{
 						LocalPath:  "a",
 						RemotePath: "b",
@@ -255,13 +264,13 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "is-okteto-has-image-buildInfo",
 			serviceName: "service",
-			buildInfo: &model.BuildInfo{
+			buildInfo: &build.Info{
 				Image:      "okteto.dev/mycustomimage:dev",
 				Context:    serviceContext,
 				Dockerfile: serviceDockerfile,
 				Target:     "build",
 				CacheFrom:  []string{"cache-image"},
-				Args: model.BuildArgs{
+				Args: build.Args{
 					namespaceEnvVar,
 					{
 						Name:  "arg1",
@@ -301,7 +310,7 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "has-platform-option",
 			serviceName: "service",
-			buildInfo:   &model.BuildInfo{},
+			buildInfo:   &build.Info{},
 			initialOpts: &types.BuildOptions{
 				Platform: "linux/amd64"},
 			isOkteto: true,
@@ -320,7 +329,7 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "has-platform-option",
 			serviceName: "service",
-			buildInfo:   &model.BuildInfo{},
+			buildInfo:   &build.Info{},
 			initialOpts: &types.BuildOptions{
 				BuildArgs: []string{
 					"arg1=value1",
@@ -344,8 +353,8 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 		{
 			name:        "only key",
 			serviceName: "service",
-			buildInfo: &model.BuildInfo{
-				Args: model.BuildArgs{
+			buildInfo: &build.Info{
+				Args: build.Args{
 					{
 						Name:  "arg1",
 						Value: "value2",
@@ -375,23 +384,25 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			okteto.CurrentStore = &okteto.OktetoContextStore{
-				Contexts: map[string]*okteto.OktetoContext{
-					"test": {
-						Namespace: "test",
-						IsOkteto:  tt.isOkteto,
+			okCtx := &okteto.ContextStateless{
+				Store: &okteto.ContextStore{
+					Contexts: map[string]*okteto.Context{
+						"test": {
+							Namespace: "test",
+							IsOkteto:  tt.isOkteto,
+						},
 					},
+					CurrentContext: "test",
 				},
-				CurrentContext: "test",
 			}
 			manifest := &model.Manifest{
 				Name: "movies",
-				Build: model.ManifestBuild{
+				Build: build.ManifestBuild{
 					tt.serviceName: tt.buildInfo,
 				},
 			}
 
-			result := OptsFromBuildInfo(manifest.Name, tt.serviceName, manifest.Build[tt.serviceName], tt.initialOpts, &tt.mr)
+			result := OptsFromBuildInfo(manifest.Name, tt.serviceName, manifest.Build[tt.serviceName], tt.initialOpts, &tt.mr, okCtx)
 			require.Equal(t, tt.expected, result)
 		})
 	}
@@ -399,13 +410,13 @@ func Test_OptsFromBuildInfo(t *testing.T) {
 
 func TestOptsFromBuildInfoForRemoteDeploy(t *testing.T) {
 	tests := []struct {
-		name      string
-		buildInfo *model.BuildInfo
+		buildInfo *build.Info
 		expected  *types.BuildOptions
+		name      string
 	}{
 		{
 			name: "all fields set",
-			buildInfo: &model.BuildInfo{
+			buildInfo: &build.Info{
 				Name:        "movies-service",
 				Context:     "service",
 				Dockerfile:  "Dockerfile",
@@ -422,7 +433,7 @@ func TestOptsFromBuildInfoForRemoteDeploy(t *testing.T) {
 		},
 		{
 			name: "just the fields needed",
-			buildInfo: &model.BuildInfo{
+			buildInfo: &build.Info{
 				Name:        "movies-service",
 				Context:     "service",
 				Dockerfile:  "Dockerfile",
@@ -473,8 +484,8 @@ func TestExtractFromContextAndDockerfile(t *testing.T) {
 		dockerfile         string
 		fileExpected       string
 		optionalContext    string
-		dockerfilesCreated []string
 		expectedError      string
+		dockerfilesCreated []string
 	}{
 		{
 			name:               "dockerfile is abs path",
@@ -597,10 +608,10 @@ func Test_replaceSecretsSourceEnvWithTempFile(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name                    string
 		fs                      afero.Fs
-		secretTempFolder        string
 		buildOptions            *types.BuildOptions
+		name                    string
+		secretTempFolder        string
 		expectedErr             bool
 		expectedReplacedSecrets bool
 	}{
@@ -734,9 +745,9 @@ func Test_createTempFileWithExpandedEnvsAtSource(t *testing.T) {
 
 func Test_translateDockerErr(t *testing.T) {
 	tests := []struct {
-		name        string
 		input       error
 		expectedErr error
+		name        string
 	}{
 		{
 			name:        "err is nil",

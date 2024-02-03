@@ -18,6 +18,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/okteto/okteto/pkg/build"
+	"github.com/okteto/okteto/pkg/deps"
 	"github.com/okteto/okteto/pkg/externalresource"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
@@ -27,11 +29,11 @@ import (
 
 func Test_addKubernetesContext(t *testing.T) {
 	var tests = []struct {
-		name         string
 		cfg          *clientcmdapi.Config
 		ctxResource  *model.ContextResource
-		currentStore *okteto.OktetoContextStore
-		wantStore    *okteto.OktetoContextStore
+		currentStore *okteto.ContextStore
+		wantStore    *okteto.ContextStore
+		name         string
 		wantError    bool
 	}{
 		{
@@ -53,13 +55,13 @@ func Test_addKubernetesContext(t *testing.T) {
 				Contexts: map[string]*clientcmdapi.Context{"context": {Namespace: "n-cfg"}},
 			},
 			ctxResource: &model.ContextResource{Context: "context", Namespace: "n-ctx"},
-			currentStore: &okteto.OktetoContextStore{
+			currentStore: &okteto.ContextStore{
 				CurrentContext: "",
-				Contexts:       map[string]*okteto.OktetoContext{},
+				Contexts:       map[string]*okteto.Context{},
 			},
-			wantStore: &okteto.OktetoContextStore{
+			wantStore: &okteto.ContextStore{
 				CurrentContext: "context",
-				Contexts: map[string]*okteto.OktetoContext{
+				Contexts: map[string]*okteto.Context{
 					"context": {Name: "context", Namespace: "n-ctx", Analytics: true},
 				},
 			},
@@ -71,13 +73,13 @@ func Test_addKubernetesContext(t *testing.T) {
 				Contexts: map[string]*clientcmdapi.Context{"context": {Namespace: "n-cfg"}},
 			},
 			ctxResource: &model.ContextResource{Context: "context"},
-			currentStore: &okteto.OktetoContextStore{
+			currentStore: &okteto.ContextStore{
 				CurrentContext: "",
-				Contexts:       map[string]*okteto.OktetoContext{},
+				Contexts:       map[string]*okteto.Context{},
 			},
-			wantStore: &okteto.OktetoContextStore{
+			wantStore: &okteto.ContextStore{
 				CurrentContext: "context",
-				Contexts: map[string]*okteto.OktetoContext{
+				Contexts: map[string]*okteto.Context{
 					"context": {Name: "context", Namespace: "n-cfg", Analytics: true},
 				},
 			},
@@ -89,13 +91,13 @@ func Test_addKubernetesContext(t *testing.T) {
 				Contexts: map[string]*clientcmdapi.Context{"context": {}},
 			},
 			ctxResource: &model.ContextResource{Context: "context"},
-			currentStore: &okteto.OktetoContextStore{
+			currentStore: &okteto.ContextStore{
 				CurrentContext: "",
-				Contexts:       map[string]*okteto.OktetoContext{},
+				Contexts:       map[string]*okteto.Context{},
 			},
-			wantStore: &okteto.OktetoContextStore{
+			wantStore: &okteto.ContextStore{
 				CurrentContext: "context",
-				Contexts: map[string]*okteto.OktetoContext{
+				Contexts: map[string]*okteto.Context{
 					"context": {Name: "context", Namespace: "default", Analytics: true},
 				},
 			},
@@ -125,11 +127,11 @@ func Test_addKubernetesContext(t *testing.T) {
 
 func Test_GetManifestV2(t *testing.T) {
 	tests := []struct {
+		expectedManifest *model.Manifest
 		name             string
 		file             string
 		manifestYAML     []byte
 		expectedErr      bool
-		expectedManifest *model.Manifest
 	}{
 		{
 			name:        "file-is-defined-option",
@@ -156,14 +158,14 @@ dependencies:
 				IsV2:      true,
 				Namespace: "test-namespace",
 				Context:   "manifest-context",
-				Build: model.ManifestBuild{
+				Build: build.ManifestBuild{
 					"service": {
 						Name:       "",
 						Target:     "build",
 						Context:    "./service",
 						Dockerfile: "custom-dockerfile",
 						Image:      "defined-tag-image",
-						Args: []model.BuildArg{
+						Args: []build.Arg{
 							{
 								Name: "KEY1", Value: "Value1",
 							},
@@ -178,12 +180,12 @@ dependencies:
 				Dev:     model.ManifestDevs{},
 				Type:    model.OktetoManifestType,
 				Destroy: &model.DestroyInfo{},
-				Dependencies: model.ManifestDependencies{
-					"one": &model.Dependency{
+				Dependencies: deps.ManifestSection{
+					"one": &deps.Dependency{
 						Repository: "https://repo.url",
 					},
 				},
-				External: externalresource.ExternalResourceSection{},
+				External: externalresource.Section{},
 			},
 		},
 		{
@@ -199,7 +201,7 @@ dependencies:
 			if err != nil {
 				t.Fatalf("failed to create dynamic manifest file: %s", err.Error())
 			}
-			if err := os.WriteFile(tmpFile.Name(), []byte(tt.manifestYAML), 0600); err != nil {
+			if err := os.WriteFile(tmpFile.Name(), tt.manifestYAML, 0600); err != nil {
 				t.Fatalf("failed to write manifest file: %s", err.Error())
 			}
 			defer os.RemoveAll(tmpFile.Name())
@@ -214,6 +216,7 @@ dependencies:
 				assert.NotNil(t, err)
 			} else {
 				m.Manifest = nil
+				tt.expectedManifest.ManifestPath = filename
 				assert.EqualValues(t, tt.expectedManifest, m)
 			}
 
@@ -223,11 +226,11 @@ dependencies:
 
 func Test_GetCtxResource(t *testing.T) {
 	tests := []struct {
+		expectedErr         error
+		expectedCtxResource *model.ContextResource
 		name                string
 		manifestName        string
-		expectedErr         error
 		manifestYAML        []byte
-		expectedCtxResource *model.ContextResource
 	}{
 		{
 			name:         "valid manifest returns a initialized ctx resource",
@@ -258,7 +261,7 @@ context: manifest-context
 				if err != nil {
 					t.Fatalf("failed to create dynamic manifest file: %s", err.Error())
 				}
-				if err := os.WriteFile(tmpFile.Name(), []byte(tt.manifestYAML), 0600); err != nil {
+				if err := os.WriteFile(tmpFile.Name(), tt.manifestYAML, 0600); err != nil {
 					t.Fatalf("failed to write manifest file: %s", err.Error())
 				}
 				defer os.RemoveAll(tmpFile.Name())

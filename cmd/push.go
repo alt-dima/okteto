@@ -24,13 +24,16 @@ import (
 	contextCMD "github.com/okteto/okteto/cmd/context"
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/analytics"
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/cmd/down"
 	"github.com/okteto/okteto/pkg/constants"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/k8s/apps"
 	"github.com/okteto/okteto/pkg/k8s/deployments"
 	"github.com/okteto/okteto/pkg/k8s/services"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
@@ -45,9 +48,9 @@ type pushOptions struct {
 	Namespace  string
 	K8sContext string
 	ImageTag   string
-	AutoDeploy bool
 	Progress   string
 	AppName    string
+	AutoDeploy bool
 	NoCache    bool
 }
 
@@ -56,11 +59,11 @@ func Push(ctx context.Context) *cobra.Command {
 	pushOpts := &pushOptions{}
 	cmd := &cobra.Command{
 		Hidden: true,
-		Use:    "push [svc]",
+		Use:    "push [service]",
 		Short:  "Build, push and redeploy source code to the target app",
 		Args:   utils.MaximumNArgsAccepted(1, "https://www.okteto.com/docs/0.10/reference/cli/#push"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !utils.LoadBoolean(constants.OktetoWithinDeployCommandContextEnvVar) {
+			if !env.LoadBoolean(constants.OktetoWithinDeployCommandContextEnvVar) {
 				oktetoLog.Warning("'okteto push' is deprecated in favor of 'okteto deploy', and will be removed in a future version")
 			}
 			ctxResource, err := utils.LoadManifestContext(pushOpts.DevPath)
@@ -80,7 +83,7 @@ func Push(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			ctxOptions := &contextCMD.ContextOptions{
+			ctxOptions := &contextCMD.Options{
 				Context:   ctxResource.Context,
 				Namespace: ctxResource.Namespace,
 				Show:      true,
@@ -279,7 +282,7 @@ func runPush(ctx context.Context, dev *model.Dev, pushOpts *pushOptions, c *kube
 }
 
 func buildImage(ctx context.Context, dev *model.Dev, imageFromApp string, pushOpts *pushOptions) (string, error) {
-	oktetoLog.Information("Running your build in %s...", okteto.Context().Builder)
+	oktetoLog.Information("Running your build in %s...", okteto.GetContext().Builder)
 
 	reg := registry.NewOktetoRegistry(okteto.Config{})
 	if pushOpts.ImageTag == "" {
@@ -291,7 +294,7 @@ func buildImage(ctx context.Context, dev *model.Dev, imageFromApp string, pushOp
 	}
 	oktetoLog.Infof("pushing with image tag %s", buildTag)
 
-	buildArgs := model.SerializeBuildArgs(dev.Push.Args)
+	buildArgs := build.SerializeArgs(dev.Push.Args)
 	buildOptions := &types.BuildOptions{
 		Path:       dev.Push.Context,
 		File:       dev.Push.Dockerfile,
@@ -302,7 +305,7 @@ func buildImage(ctx context.Context, dev *model.Dev, imageFromApp string, pushOp
 		BuildArgs:  buildArgs,
 		OutputMode: pushOpts.Progress,
 	}
-	if err := buildv1.NewBuilderFromScratch().Build(ctx, buildOptions); err != nil {
+	if err := buildv1.NewBuilderFromScratch(io.NewIOController()).Build(ctx, buildOptions); err != nil {
 		return "", err
 	}
 

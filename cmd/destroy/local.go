@@ -1,3 +1,16 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package destroy
 
 import (
@@ -65,7 +78,7 @@ func (ld *localDestroyCommand) runDestroy(ctx context.Context, opts *Options) er
 
 	namespace := opts.Namespace
 	if namespace == "" {
-		namespace = okteto.Context().Namespace
+		namespace = okteto.GetContext().Namespace
 	}
 
 	oktetoLog.AddToBuffer(oktetoLog.InfoLevel, "Destroying...")
@@ -98,7 +111,7 @@ func (ld *localDestroyCommand) runDestroy(ctx context.Context, opts *Options) er
 	}
 
 	if ld.manifest.Context == "" {
-		ld.manifest.Context = okteto.Context().Name
+		ld.manifest.Context = okteto.GetContext().Name
 	}
 	if ld.manifest.Namespace == "" {
 		ld.manifest.Namespace = namespace
@@ -109,7 +122,7 @@ func (ld *localDestroyCommand) runDestroy(ctx context.Context, opts *Options) er
 		for depName, depInfo := range ld.manifest.Dependencies {
 			oktetoLog.SetStage(fmt.Sprintf("Destroying dependency '%s'", depName))
 
-			namespace := okteto.Context().Namespace
+			namespace := okteto.GetContext().Namespace
 			if depInfo.Namespace != "" {
 				namespace = depInfo.Namespace
 			}
@@ -160,7 +173,7 @@ func (ld *localDestroyCommand) runDestroy(ctx context.Context, opts *Options) er
 			oktetoLog.Information("Running '%s'", command.Name)
 			oktetoLog.SetStage(command.Name)
 			if err := ld.executor.Execute(command, opts.Variables); err != nil {
-				err = fmt.Errorf("error executing command '%s': %s", command.Name, err.Error())
+				err = fmt.Errorf("error executing command '%s': %w", command.Name, err)
 				if !opts.ForceDestroy {
 					if err := ld.ConfigMapHandler.setErrorStatus(ctx, cfg, data, err); err != nil {
 						exit <- err
@@ -289,7 +302,7 @@ func (dc *localDestroyCommand) destroyHelmReleasesIfPresent(ctx context.Context,
 }
 
 func (ld *localDestroyCommand) destroyDivert(ctx context.Context, manifest *model.Manifest) error {
-	c, _, err := ld.k8sClientProvider.Provide(okteto.Context().Cfg)
+	c, _, err := ld.k8sClientProvider.Provide(okteto.GetContext().Cfg)
 	if err != nil {
 		return err
 	}

@@ -21,10 +21,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/okteto/okteto/pkg/build"
 	"github.com/okteto/okteto/pkg/config"
 	"github.com/okteto/okteto/pkg/constants"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
-	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
 	"github.com/pkg/errors"
@@ -35,8 +35,8 @@ const (
 )
 
 // GetDockerfile returns the dockerfile with the cache and registry translations
-func GetDockerfile(dockerFile string) (string, error) {
-	file, err := getTranslatedDockerFile(dockerFile)
+func GetDockerfile(dockerFile string, okCtx OktetoContextInterface) (string, error) {
+	file, err := getTranslatedDockerFile(dockerFile, okCtx)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create temporary build folder")
 	}
@@ -44,7 +44,7 @@ func GetDockerfile(dockerFile string) (string, error) {
 	return file, nil
 }
 
-func getTranslatedDockerFile(filename string) (string, error) {
+func getTranslatedDockerFile(filename string, okCtx OktetoContextInterface) (string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return "", err
@@ -59,7 +59,7 @@ func getTranslatedDockerFile(filename string) (string, error) {
 
 	dockerfileTmpFolder := filepath.Join(config.GetOktetoHome(), ".dockerfile")
 	if err := os.MkdirAll(dockerfileTmpFolder, 0700); err != nil {
-		return "", fmt.Errorf("failed to create %s: %s", dockerfileTmpFolder, err)
+		return "", fmt.Errorf("failed to create %s: %w", dockerfileTmpFolder, err)
 	}
 
 	tmpFile, err := os.CreateTemp(dockerfileTmpFolder, "buildkit-")
@@ -70,22 +70,22 @@ func getTranslatedDockerFile(filename string) (string, error) {
 	datawriter := bufio.NewWriter(tmpFile)
 	defer datawriter.Flush()
 
-	userID := okteto.Context().UserID
-	if userID == "" {
-		userID = "anonymous"
+	userId := okCtx.GetCurrentUser()
+	if userId == "" {
+		userId = "anonymous"
 	}
 
-	withCacheHandler := okteto.Context().Builder == okteto.CloudBuildKitURL
+	withCacheHandler := okCtx.GetCurrentBuilder() == okteto.CloudBuildKitURL
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		translatedLine := translateOktetoRegistryImage(line)
+		translatedLine := translateOktetoRegistryImage(line, okCtx)
 		if withCacheHandler {
-			translatedLine = translateCacheHandler(translatedLine, userID)
+			translatedLine = translateCacheHandler(translatedLine, userId)
 		}
 		_, err = datawriter.WriteString(translatedLine + "\n")
 		if err != nil {
-			return "", fmt.Errorf("failed to write dockerfile: %s", err)
+			return "", fmt.Errorf("failed to write dockerfile: %w", err)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -126,17 +126,19 @@ func translateCacheHandler(input, userID string) string {
 	return input
 }
 
-func translateOktetoRegistryImage(input string) string {
-	replacer := registry.NewRegistryReplacer(okteto.Config{})
+func translateOktetoRegistryImage(input string, okCtx OktetoContextInterface) string {
+	replacer := registry.NewRegistryReplacer(GetRegistryConfigFromOktetoConfig(okCtx))
 	if strings.Contains(input, constants.DevRegistry) {
-		tag := replacer.Replace(input, constants.DevRegistry, okteto.Context().Namespace)
+		tag := replacer.Replace(input, constants.DevRegistry, okCtx.GetCurrentNamespace())
 		return tag
 	}
 
 	if strings.Contains(input, constants.GlobalRegistry) {
 		globalNamespace := constants.DefaultGlobalNamespace
-		if okteto.Context().GlobalNamespace != "" {
-			globalNamespace = okteto.Context().GlobalNamespace
+
+		ctxGlobalNamespace := okCtx.GetGlobalNamespace()
+		if ctxGlobalNamespace != "" {
+			globalNamespace = ctxGlobalNamespace
 		}
 		tag := replacer.Replace(input, constants.GlobalRegistry, globalNamespace)
 		return tag
@@ -147,8 +149,8 @@ func translateOktetoRegistryImage(input string) string {
 }
 
 // CreateDockerfileWithVolumeMounts creates the Dockerfile with volume mounts and returns the BuildInfo
-func CreateDockerfileWithVolumeMounts(image string, volumes []model.StackVolume) (*model.BuildInfo, error) {
-	build := &model.BuildInfo{}
+func CreateDockerfileWithVolumeMounts(image string, volumes []build.VolumeMounts) (*build.Info, error) {
+	build := &build.Info{}
 
 	ctx, err := filepath.Abs(".")
 	if err != nil {
@@ -157,7 +159,7 @@ func CreateDockerfileWithVolumeMounts(image string, volumes []model.StackVolume)
 	build.Context = ctx
 	dockerfileTmpFolder := filepath.Join(config.GetOktetoHome(), ".dockerfile")
 	if err := os.MkdirAll(dockerfileTmpFolder, 0700); err != nil {
-		return build, fmt.Errorf("failed to create %s: %s", dockerfileTmpFolder, err)
+		return build, fmt.Errorf("failed to create %s: %w", dockerfileTmpFolder, err)
 	}
 
 	tmpFile, err := os.CreateTemp(dockerfileTmpFolder, "buildkit-")
@@ -170,7 +172,7 @@ func CreateDockerfileWithVolumeMounts(image string, volumes []model.StackVolume)
 
 	_, err = datawriter.Write([]byte(fmt.Sprintf("FROM %s\n", image)))
 	if err != nil {
-		return build, fmt.Errorf("failed to write dockerfile: %s", err)
+		return build, fmt.Errorf("failed to write dockerfile: %w", err)
 	}
 	for _, volume := range volumes {
 		_, err = datawriter.Write([]byte(fmt.Sprintf("COPY %s %s\n", filepath.ToSlash(volume.LocalPath), volume.RemotePath)))

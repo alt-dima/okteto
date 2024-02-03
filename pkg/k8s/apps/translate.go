@@ -20,9 +20,8 @@ import (
 	"strings"
 
 	"github.com/okteto/okteto/pkg/constants"
-	"github.com/okteto/okteto/pkg/model"
-
 	oktetoLog "github.com/okteto/okteto/pkg/log"
+	"github.com/okteto/okteto/pkg/model"
 	apiv1 "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -104,7 +103,7 @@ func (tr *Translation) translate() error {
 		TranslatePodAffinity(tr.DevApp.PodSpec(), tr.MainDev.Name)
 	}
 
-	tr.DevApp.PodSpec().TerminationGracePeriodSeconds = pointer.Int64Ptr(0)
+	tr.DevApp.PodSpec().TerminationGracePeriodSeconds = pointer.Int64(0)
 
 	for _, rule := range tr.Rules {
 		devContainer := GetDevContainer(tr.DevApp.PodSpec(), rule.Container)

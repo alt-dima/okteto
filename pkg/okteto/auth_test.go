@@ -35,9 +35,9 @@ func TestAuth(t *testing.T) {
 		err  error
 	}
 	tests := []struct {
-		name     string
-		input    input
 		expected expected
+		input    input
+		name     string
 	}{
 		{
 			name: "error authenticating",
@@ -117,7 +117,7 @@ func TestAuth(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := OktetoClient{
+			c := Client{
 				client: tt.input.client,
 			}
 			u, err := c.Auth(context.Background(), "")
@@ -136,9 +136,9 @@ func TestAuthGQLCall(t *testing.T) {
 		err  error
 	}
 	tests := []struct {
-		name     string
 		input    input
 		expected expected
+		name     string
 	}{
 		{
 			name: "error",
@@ -193,7 +193,7 @@ func TestAuthGQLCall(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := OktetoClient{
+			c := Client{
 				client: tt.input.client,
 			}
 			u, err := c.authUser(context.Background(), "")
@@ -212,9 +212,9 @@ func TestDeprecatedAuth(t *testing.T) {
 		err  error
 	}
 	tests := []struct {
-		name     string
-		input    input
 		expected expected
+		input    input
+		name     string
 	}{
 		{
 			name: "error",
@@ -267,7 +267,7 @@ func TestDeprecatedAuth(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := OktetoClient{
+			c := Client{
 				client: tt.input.client,
 			}
 			u, err := c.deprecatedAuthUser(context.Background(), "")

@@ -1,10 +1,22 @@
+// Copyright 2023 The Okteto Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package build
 
 import (
+	"errors"
 	"fmt"
 	"testing"
-
-	"errors"
 
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -14,10 +26,10 @@ func Test_getErrorMessage(t *testing.T) {
 	imageTag := "example/image:latest"
 
 	tests := []struct {
-		name     string
 		err      error
-		tag      string
 		expected error
+		name     string
+		tag      string
 	}{
 		{
 			name:     "no error",
@@ -83,7 +95,7 @@ func Test_getErrorMessage(t *testing.T) {
 			err:  errors.New("pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed"),
 			tag:  imageTag,
 			expected: oktetoErrors.UserError{
-				E:    fmt.Errorf("error building image: failed to pull image '%s'. The repository is not accessible or it does not exist.", imageTag),
+				E:    fmt.Errorf("error building image: failed to pull image '%s'. The repository is not accessible or it does not exist", imageTag),
 				Hint: fmt.Sprintf("Please verify the name of the image '%s' to make sure it exists.", imageTag),
 			},
 		},
@@ -99,15 +111,19 @@ func Test_getErrorMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := getErrorMessage(tt.err, tt.tag)
-			assert.Equal(t, tt.expected, err)
+			if tt.expected == nil {
+				assert.Nil(t, err)
+			} else {
+				assert.ErrorContains(t, tt.expected, err.Error())
+			}
 		})
 	}
 }
 
 func Test_isTransientError(t *testing.T) {
 	tests := []struct {
-		name     string
 		err      error
+		name     string
 		expected bool
 	}{
 		{

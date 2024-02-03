@@ -33,7 +33,7 @@ func Wake(ctx context.Context) *cobra.Command {
 		Args:  utils.ExactArgsAccepted(1, ""),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			prToWake := args[0]
-			if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.ContextOptions{}); err != nil {
+			if err := contextCMD.NewContextCommand().Run(ctx, &contextCMD.Options{}); err != nil {
 				return err
 			}
 
@@ -60,7 +60,7 @@ func (pr *Command) ExecuteWakePreview(ctx context.Context, preview string) error
 
 	// trigger preview environment to wake
 	if err := pr.okClient.Namespaces().Wake(ctx, preview); err != nil {
-		return fmt.Errorf("%w: %v", errFailedWakePreview, err)
+		return fmt.Errorf("%w: %w", errFailedWakePreview, err)
 	}
 
 	oktetoLog.Success("Preview environment '%s' is awake now", preview)

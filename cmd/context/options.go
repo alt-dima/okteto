@@ -22,7 +22,7 @@ import (
 	"github.com/okteto/okteto/pkg/okteto"
 )
 
-type ContextOptions struct {
+type Options struct {
 	Token                 string
 	Context               string
 	Namespace             string
@@ -36,16 +36,17 @@ type ContextOptions struct {
 	IsOkteto              bool
 	raiseNotCtxError      bool
 	InsecureSkipTlsVerify bool
+	InferredToken         bool
 }
 
-func (o *ContextOptions) InitFromContext() {
+func (o *Options) InitFromContext() {
 	if o.IsCtxCommand {
 		return
 	}
 	if o.Context != "" {
 		return
 	}
-	ctxStore := okteto.ContextStore()
+	ctxStore := okteto.GetContextStore()
 	if ctxStore.CurrentContext == "" {
 		return
 	}
@@ -59,7 +60,7 @@ func (o *ContextOptions) InitFromContext() {
 	}
 }
 
-func (o *ContextOptions) InitFromEnvVars() {
+func (o *Options) InitFromEnvVars() {
 	usedEnvVars := []string{}
 
 	if o.Context == "" && os.Getenv(model.OktetoURLEnvVar) != "" {
@@ -82,10 +83,11 @@ func (o *ContextOptions) InitFromEnvVars() {
 	}
 
 	if o.Token == "" && envToken != "" {
-		if !okteto.HasBeenLogged(o.Context) || okteto.Context().Token != envToken {
+		if !okteto.HasBeenLogged(o.Context) || okteto.GetContext().Token != envToken {
 			usedEnvVars = append(usedEnvVars, model.OktetoTokenEnvVar)
 		}
 		o.Token = envToken
+		o.InferredToken = true
 	}
 
 	if o.Namespace == "" && os.Getenv(model.OktetoNamespaceEnvVar) != "" {
