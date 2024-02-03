@@ -128,7 +128,7 @@ func generateGuestyDev(devName string, workloadType string) *model.Dev {
 		Container:            devName,
 		Workdir:              "/appdev",
 		ImagePullPolicy:      "IfNotPresent",
-		BootstrapCommand:     "echo -e \"//registry.npmjs.org/:_authToken=npm_TOKEN\" > ~/.npmrc; apt update; apt -y install python3 procps; ln -sf /app/node_modules ./node_modules; mkdir -p dist",
+		BootstrapCommand:     "echo -e \"//registry.npmjs.org/:_authToken=npm_TOKEN\" > ~/.npmrc; apt update; apt -y --no-install-recommends install python3 procps; ln -sf /app/node_modules ./node_modules; mkdir -p dist",
 		PersistentVolumeInfo: &model.PersistentVolumeInfo{Enabled: false},
 		Lifecycle:            &model.Lifecycle{PostStart: true, PostStop: true},
 		Keda:                 true,
