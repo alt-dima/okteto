@@ -132,7 +132,7 @@ func generateGuestyDev(devName string, workloadType string) *model.Dev {
 		PersistentVolumeInfo: &model.PersistentVolumeInfo{Enabled: false},
 		Lifecycle:            &model.Lifecycle{PostStart: true, PostStop: true},
 		Keda:                 true,
-		Command:              model.Command{Values: []string{"bash"}},
+		Command:              model.Command{Values: []string{"sh"}},
 		Sync:                 model.Sync{Folders: []model.SyncFolder{model.SyncFolder{LocalPath: ".", RemotePath: "/appdev"}}},
 		Environment:          env.Environment{env.Var{Name: "DEBUG_PORT", Value: "9229"}},
 		Forward:              []forward.Forward{forward.Forward{Local: 9229, Remote: 9229}, forward.Forward{Local: 3000, Remote: 3000}},
