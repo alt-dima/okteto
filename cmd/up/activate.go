@@ -184,7 +184,7 @@ func (up *upContext) activate() error {
 
 	go func() {
 		output := <-up.bootstraped
-		oktetoLog.Debugf("clean command output: %s", output)
+		oktetoLog.Debugf("bootstrap command output: %s", output)
 
 		outByCommand := strings.Split(strings.TrimSpace(output), "\n")
 		var version, watches string
