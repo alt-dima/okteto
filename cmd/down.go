@@ -198,7 +198,7 @@ func runDown(ctx context.Context, dev *model.Dev, rm bool, c kubernetes.Interfac
 		}
 
 		if dev.Keda {
-			keda.UnpauseKeda(dev)
+			keda.UnpauseKeda(app)
 		}
 
 		oktetoLog.Success(fmt.Sprintf("Development container '%s' deactivated", dev.Name))

@@ -5,16 +5,16 @@ import (
 	"fmt"
 
 	apiextensionsclientset "github.com/kedacore/keda/v2/pkg/generated/clientset/versioned"
+	"github.com/okteto/okteto/pkg/k8s/apps"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
-	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func UnpauseKeda(dev *model.Dev) {
-	workloadName := dev.Name
-	namespaceName := dev.Namespace
+func UnpauseKeda(app apps.App) {
+	workloadName := app.ObjectMeta().Name
+	namespaceName := app.ObjectMeta().Namespace
 	context := context.TODO()
 	_, restConfig, err := okteto.GetK8sClient()
 	if err != nil {
@@ -36,9 +36,9 @@ func UnpauseKeda(dev *model.Dev) {
 	oktetoLog.Success(fmt.Sprintf("Keda unpaused %v", workloadName))
 }
 
-func PauseKeda(dev *model.Dev) {
-	workloadName := dev.Name
-	namespaceName := dev.Namespace
+func PauseKeda(app apps.App) {
+	workloadName := app.ObjectMeta().Name
+	namespaceName := app.ObjectMeta().Namespace
 	context := context.TODO()
 	_, restConfig, err := okteto.GetK8sClient()
 	if err != nil {
