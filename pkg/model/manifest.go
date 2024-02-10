@@ -1118,7 +1118,7 @@ func (m *Manifest) WriteToFile(filePath string) error {
 		}
 	}
 
-	m.reorderDocFields(&doc)
+	//m.reorderDocFields(&doc)
 
 	buffer := bytes.NewBuffer(nil)
 	encoder := yaml3.NewEncoder(buffer)

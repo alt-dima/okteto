@@ -69,8 +69,7 @@ func (mc *Command) RunGuestyInitV1(ctx context.Context, opts *InitOpts) error {
 	//Create new empty okteto manifest dev section
 	devs := model.ManifestDevs{}
 
-	// Should be removed?
-	manifest.Name = "tese"
+	manifest.Deploy = nil
 
 	//Loop over PiManifest
 	for i := 0; i < len(piManifest.Services) && len(piManifest.Services) != 0; i++ {
@@ -132,7 +131,7 @@ func generateGuestyDev(devName string, workloadType string) *model.Dev {
 		PersistentVolumeInfo: &model.PersistentVolumeInfo{Enabled: false},
 		Lifecycle:            &model.Lifecycle{PostStart: true, PostStop: true},
 		Keda:                 true,
-		Command:              model.Command{Values: []string{"sh"}},
+		Command:              model.Command{Values: []string{"bash"}},
 		Sync:                 model.Sync{Folders: []model.SyncFolder{model.SyncFolder{LocalPath: ".", RemotePath: "/appdev"}}},
 		Environment:          env.Environment{env.Var{Name: "DEBUG_PORT", Value: "9229"}},
 		Forward:              []forward.Forward{forward.Forward{Local: 9229, Remote: 9229}, forward.Forward{Local: 3000, Remote: 3000}},
