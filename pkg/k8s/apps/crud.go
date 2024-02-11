@@ -26,6 +26,7 @@ import (
 	"github.com/okteto/okteto/pkg/model"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -46,7 +47,7 @@ func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Int
 		dev.Name = "scarecrow-altuhovsu"
 		//dev.Autocreate = true
 		d.ObjectMeta.Name = dev.Name
-		d.ObjectMeta.UID = ""
+		d.ObjectMeta.UID = types.UID("")
 		// d.ObjectMeta.Labels["app"] = dev.Name
 		// d.ObjectMeta.Labels["app.kubernetes.io/name"] = dev.Name
 		// d.Spec.Template.Labels["app"] = dev.Name
