@@ -46,6 +46,7 @@ func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Int
 		dev.Name = "scarecrow-altuhovsu"
 		//dev.Autocreate = true
 		d.ObjectMeta.Name = dev.Name
+		d.ObjectMeta.UID = ""
 		// d.ObjectMeta.Labels["app"] = dev.Name
 		// d.ObjectMeta.Labels["app.kubernetes.io/name"] = dev.Name
 		// d.Spec.Template.Labels["app"] = dev.Name
