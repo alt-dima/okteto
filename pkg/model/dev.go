@@ -99,6 +99,8 @@ type Dev struct {
 	InitFromImage bool `json:"initFromImage,omitempty" yaml:"initFromImage,omitempty"`
 	Autocreate    bool `json:"autocreate,omitempty" yaml:"autocreate,omitempty"`
 	Healthchecks  bool `json:"healthchecks,omitempty" yaml:"healthchecks,omitempty"` // Deprecated field
+
+	PreserveOriginal bool `json:"preserveOriginal,omitempty" yaml:"preserveOriginal,omitempty"`
 }
 
 type Affinity apiv1.Affinity

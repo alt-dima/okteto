@@ -305,9 +305,9 @@ func (up *upContext) createDevContainer(ctx context.Context, app apps.App, creat
 		if err := tr.DevApp.Deploy(ctx, k8sClient); err != nil {
 			return err
 		}
-		if err := tr.App.Deploy(ctx, k8sClient); err != nil {
-			return err
-		}
+		// if err := tr.App.Deploy(ctx, k8sClient); err != nil {
+		// 	return err
+		// }
 		if tr.MainDev == tr.Dev {
 			devApp = tr.DevApp
 		}

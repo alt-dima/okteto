@@ -25,6 +25,7 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	apiv1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -36,7 +37,34 @@ func (e ErrApplicationNotFound) Error() string {
 	return fmt.Sprintf("the application '%s' referred by your okteto manifest doesn't exist", e.Name)
 }
 func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Interface) (App, error) {
+	if dev.PreserveOriginal {
+		dev.Name = "scarecrow"
+	}
 	d, err := deployments.GetByDev(ctx, dev, namespace, c)
+
+	if dev.PreserveOriginal {
+		dev.Name = "scarecrow-altuhovsu"
+		//dev.Autocreate = true
+		d.ObjectMeta.Name = dev.Name
+		// d.ObjectMeta.Labels["app"] = dev.Name
+		// d.ObjectMeta.Labels["app.kubernetes.io/name"] = dev.Name
+		// d.Spec.Template.Labels["app"] = dev.Name
+		// d.Spec.Template.Labels["app.kubernetes.io/name"] = dev.Name
+		d.Spec.Selector = &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"app": dev.Name,
+			},
+		}
+		d.ObjectMeta.Labels = model.Labels{
+			constants.DevLabel: "true",
+		}
+		d.ObjectMeta.Annotations = model.Annotations{
+			model.OktetoAutoCreateAnnotation: model.OktetoUpCmd,
+		}
+		d.Spec.Template.Labels = model.Labels{
+			"app": dev.Name,
+		}
+	}
 
 	if err == nil {
 		return &DeploymentApp{d: d}, nil

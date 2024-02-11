@@ -400,6 +400,9 @@ func GetApp(ctx context.Context, dev *model.Dev, c kubernetes.Interface, isRetry
     More information is available here: https://okteto.com/docs/reference/cli/#up`,
 		}
 	}
+	if dev.PreserveOriginal {
+		return app, true, nil
+	}
 	return app, false, nil
 }
 
