@@ -25,7 +25,6 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	apiv1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
@@ -45,27 +44,19 @@ func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Int
 
 	if dev.PreserveOriginal {
 		dev.Name = "scarecrow-altuhovsu"
-		//dev.Autocreate = true
-		d.ObjectMeta.Name = dev.Name
-		d.ObjectMeta.UID = types.UID("")
-		// d.ObjectMeta.Labels["app"] = dev.Name
-		// d.ObjectMeta.Labels["app.kubernetes.io/name"] = dev.Name
-		// d.Spec.Template.Labels["app"] = dev.Name
-		// d.Spec.Template.Labels["app.kubernetes.io/name"] = dev.Name
-		d.Spec.Selector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"app": dev.Name,
-			},
-		}
-		d.ObjectMeta.Labels = model.Labels{
-			constants.DevLabel: "true",
-		}
-		d.ObjectMeta.Annotations = model.Annotations{
-			model.OktetoAutoCreateAnnotation: model.OktetoUpCmd,
-		}
-		d.Spec.Template.Labels = model.Labels{
-			"app": dev.Name,
-		}
+
+		deploySelector := *d.Spec.Selector
+		deploySelector.MatchLabels["app"] = dev.Name
+		d.Spec.Selector = &deploySelector
+
+		deployObject := *d
+		deployObject.ObjectMeta.Name = dev.Name
+		deployObject.ObjectMeta.UID = types.UID("")
+		deployObject.ObjectMeta.Labels[constants.DevLabel] = "true"
+		deployObject.ObjectMeta.Labels["app"] = dev.Name
+		deployObject.ObjectMeta.Annotations[model.OktetoAutoCreateAnnotation] = model.OktetoUpCmd
+		deployObject.Spec.Template.Labels["app"] = dev.Name
+		d = &deployObject
 	}
 
 	if err == nil {
