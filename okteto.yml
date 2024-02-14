@@ -38,3 +38,4 @@ dev:
       compression: false
       verbose: false
     preserveOriginal: true
+    svcPort: 3000
