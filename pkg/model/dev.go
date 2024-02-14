@@ -31,6 +31,7 @@ import (
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
+	"github.com/okteto/okteto/pkg/format"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model/forward"
 	yaml "gopkg.in/yaml.v2"
@@ -101,6 +102,7 @@ type Dev struct {
 	Healthchecks  bool `json:"healthchecks,omitempty" yaml:"healthchecks,omitempty"` // Deprecated field
 
 	PreserveOriginal bool `json:"preserveOriginal,omitempty" yaml:"preserveOriginal,omitempty"`
+	OriginalDevName  string
 }
 
 type Affinity apiv1.Affinity
@@ -1234,6 +1236,16 @@ func (service *Dev) validateForExtraFields() error {
 // DevCloneName returns the name of the mirrored version of a given resource
 func DevCloneName(name string) string {
 	return fmt.Sprintf("%s-okteto", name)
+}
+
+// DevCloneName returns the name of the mirrored version of a given resource
+func DevNameWithSuffix(name string) string {
+	suffix, ok := os.LookupEnv("LDE_IDENTIFIER")
+	if !ok {
+		suffix, _ = os.Hostname()
+	}
+	suffix = format.ResourceK8sMetaString(suffix)
+	return fmt.Sprintf("%s-%s", name, suffix)
 }
 
 func (dev *Dev) IsInteractive() bool {

@@ -326,10 +326,6 @@ func Up(at analyticsTrackerInterface, ioCtrl *io.Controller, k8sLogger *io.K8sLo
 				oktetoLog.Info("Setting Autocreate to true because manifest v1 and flag --deploy")
 				up.Dev.Autocreate = true
 			}
-			if dev.PreserveOriginal {
-				up.Dev.Name = "scarecrow-altuhovsu"
-				up.Dev.Autocreate = true
-			}
 
 			// only if the context is an okteto one, we should verify if the namespace has to be woken up
 			if okteto.GetContext().IsOkteto {

@@ -184,6 +184,11 @@ func LoadManifestWithContext(ctx context.Context, opts ManifestOptions) (*model.
 
 		dev.Namespace = okteto.GetContext().Namespace
 		dev.Context = okteto.GetContext().Name
+		if dev.PreserveOriginal {
+			dev.OriginalDevName = dev.Name
+			dev.Name = model.DevNameWithSuffix(dev.Name)
+			dev.Autocreate = true
+		}
 	}
 
 	return manifest, nil
