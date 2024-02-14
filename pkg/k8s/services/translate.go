@@ -48,8 +48,8 @@ func translate(dev *model.Dev) *apiv1.Service {
 			Ports: []apiv1.ServicePort{
 				{
 					Name:       dev.Name,
-					Port:       8080,
-					TargetPort: intstr.IntOrString{StrVal: "8080"},
+					Port:       dev.SvcPort,
+					TargetPort: intstr.IntOrString{IntVal: dev.SvcPort},
 				},
 			},
 		},

@@ -103,6 +103,7 @@ type Dev struct {
 
 	PreserveOriginal bool `json:"preserveOriginal,omitempty" yaml:"preserveOriginal,omitempty"`
 	OriginalDevName  string
+	SvcPort          int32 `json:"svcPort,omitempty" yaml:"svcPort,omitempty"`
 }
 
 type Affinity apiv1.Affinity
@@ -472,6 +473,9 @@ func (dev *Dev) SetDefaults() error {
 	}
 	if dev.SSHServerPort == 0 {
 		dev.SSHServerPort = oktetoDefaultSSHServerPort
+	}
+	if dev.SvcPort == 0 {
+		dev.SvcPort = oktetoDefaultSvcPort
 	}
 
 	dev.setRunAsUserDefaults(dev)
