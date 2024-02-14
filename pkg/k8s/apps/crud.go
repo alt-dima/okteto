@@ -42,6 +42,7 @@ func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Int
 	if dev.PreserveOriginal {
 		deploySelector := *d.Spec.Selector
 		deploySelector.MatchLabels["app"] = dev.Name
+		deploySelector.MatchLabels["app.kubernetes.io/name"] = dev.Name
 		d.Spec.Selector = &deploySelector
 
 		deployObject := *d
@@ -49,8 +50,10 @@ func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Int
 		deployObject.ObjectMeta.UID = types.UID("")
 		deployObject.ObjectMeta.Labels[constants.DevLabel] = "true"
 		deployObject.ObjectMeta.Labels["app"] = dev.Name
+		deployObject.ObjectMeta.Labels["app.kubernetes.io/name"] = dev.Name
 		deployObject.ObjectMeta.Annotations[model.OktetoAutoCreateAnnotation] = model.OktetoUpCmd
 		deployObject.Spec.Template.Labels["app"] = dev.Name
+		deployObject.Spec.Template.Labels["app.kubernetes.io/name"] = dev.Name
 		d = &deployObject
 	}
 
