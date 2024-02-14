@@ -182,7 +182,7 @@ func runDown(ctx context.Context, dev *model.Dev, rm bool, c kubernetes.Interfac
 			}
 			app = apps.NewDeploymentApp(deployments.Sandbox(dev))
 		}
-		if dev.Autocreate {
+		if dev.Autocreate && !dev.PreserveOriginal {
 			app = apps.NewDeploymentApp(deployments.Sandbox(dev))
 		}
 

@@ -25,6 +25,7 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	apiv1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -37,6 +38,24 @@ func (e ErrApplicationNotFound) Error() string {
 }
 func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Interface) (App, error) {
 	d, err := deployments.GetByDev(ctx, dev, namespace, c)
+
+	if dev.PreserveOriginal {
+		deploySelector := *d.Spec.Selector
+		deploySelector.MatchLabels["app"] = dev.Name
+		deploySelector.MatchLabels["app.kubernetes.io/name"] = dev.Name
+		d.Spec.Selector = &deploySelector
+
+		deployObject := *d
+		deployObject.ObjectMeta.Name = dev.Name
+		deployObject.ObjectMeta.UID = types.UID("")
+		deployObject.ObjectMeta.Labels[constants.DevLabel] = "true"
+		deployObject.ObjectMeta.Labels["app"] = dev.Name
+		deployObject.ObjectMeta.Labels["app.kubernetes.io/name"] = dev.Name
+		deployObject.ObjectMeta.Annotations[model.OktetoAutoCreateAnnotation] = model.OktetoUpCmd
+		deployObject.Spec.Template.Labels["app"] = dev.Name
+		deployObject.Spec.Template.Labels["app.kubernetes.io/name"] = dev.Name
+		d = &deployObject
+	}
 
 	if err == nil {
 		return &DeploymentApp{d: d}, nil

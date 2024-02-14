@@ -111,7 +111,11 @@ func Get(ctx context.Context, name, namespace string, c kubernetes.Interface) (*
 // GetByDev returns a deployment object given a dev struct (by name or by label)
 func GetByDev(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Interface) (*appsv1.Deployment, error) {
 	if len(dev.Selector) == 0 {
-		return Get(ctx, dev.Name, namespace, c)
+		nameToGetFromK8s := dev.Name
+		if dev.PreserveOriginal {
+			nameToGetFromK8s = dev.OriginalDevName
+		}
+		return Get(ctx, nameToGetFromK8s, namespace, c)
 	}
 
 	dList, err := c.AppsV1().Deployments(namespace).List(

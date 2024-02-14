@@ -116,6 +116,9 @@ const (
 	// OktetoPushCmd push command
 	OktetoPushCmd = "push"
 
+	// Default Port for k8s service in autocreate and preserve original modes
+	oktetoDefaultSvcPort = 8080
+
 	// DeprecatedOktetoVolumeName name of the (deprecated) okteto persistent volume
 	DeprecatedOktetoVolumeName = "okteto"
 	// OktetoVolumeNameTemplate name template of the development container persistent volume

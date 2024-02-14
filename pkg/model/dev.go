@@ -31,6 +31,7 @@ import (
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
+	"github.com/okteto/okteto/pkg/format"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model/forward"
 	yaml "gopkg.in/yaml.v2"
@@ -102,6 +103,9 @@ type Dev struct {
 
 	Keda             bool   `json:"keda,omitempty" yaml:"keda,omitempty"`
 	BootstrapCommand string `json:"bootstrapCommand,omitempty" yaml:"bootstrapCommand,omitempty"`
+	PreserveOriginal bool   `json:"preserveOriginal,omitempty" yaml:"preserveOriginal,omitempty"`
+	OriginalDevName  string
+	SvcPort          int32 `json:"svcPort,omitempty" yaml:"svcPort,omitempty"`
 }
 
 type Affinity apiv1.Affinity
@@ -471,6 +475,9 @@ func (dev *Dev) SetDefaults() error {
 	}
 	if dev.SSHServerPort == 0 {
 		dev.SSHServerPort = oktetoDefaultSSHServerPort
+	}
+	if dev.SvcPort == 0 {
+		dev.SvcPort = oktetoDefaultSvcPort
 	}
 
 	dev.setRunAsUserDefaults(dev)
@@ -1235,6 +1242,16 @@ func (service *Dev) validateForExtraFields() error {
 // DevCloneName returns the name of the mirrored version of a given resource
 func DevCloneName(name string) string {
 	return fmt.Sprintf("%s-okteto", name)
+}
+
+// DevCloneName returns the name of the mirrored version of a given resource
+func DevNameWithSuffix(name string) string {
+	suffix, ok := os.LookupEnv("LDE_IDENTIFIER")
+	if !ok {
+		suffix, _ = os.Hostname()
+	}
+	suffix = format.ResourceK8sMetaString(suffix)
+	return fmt.Sprintf("%s-%s", name, suffix)
 }
 
 func (dev *Dev) IsInteractive() bool {
