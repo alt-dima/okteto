@@ -54,6 +54,15 @@ func Get(ctx context.Context, dev *model.Dev, namespace string, c kubernetes.Int
 		deployObject.ObjectMeta.Annotations[model.OktetoAutoCreateAnnotation] = model.OktetoUpCmd
 		deployObject.Spec.Template.Labels["app"] = dev.Name
 		deployObject.Spec.Template.Labels["app.kubernetes.io/name"] = dev.Name
+		for contIdx, container := range deployObject.Spec.Template.Spec.Containers {
+			if container.Name == dev.Container {
+				for envIdx, envVar := range container.Env {
+					if envVar.Name == "IDENTITY" || envVar.Name == "name" {
+						deployObject.Spec.Template.Spec.Containers[contIdx].Env[envIdx].Value = dev.Name
+					}
+				}
+			}
+		}
 		d = &deployObject
 	}
 

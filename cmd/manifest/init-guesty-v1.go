@@ -139,6 +139,8 @@ func generateGuestyDev(devName string, workloadType string) *model.Dev {
 		SecurityContext:      &model.SecurityContext{Capabilities: &model.Capabilities{Add: []apiv1.Capability{"fowner", "chown", "setuid", "setgid"}}},
 		NodeSelector:         map[string]string{"WorkloadType": workloadType},
 		Secrets:              []model.Secret{model.Secret{"$HOME/.npmrc", "/root/.npmrc", 644}},
+		SvcPort:              3000,
+		PreserveOriginal:     true,
 	}
 
 	return dev
