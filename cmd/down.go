@@ -197,7 +197,7 @@ func runDown(ctx context.Context, dev *model.Dev, rm bool, c kubernetes.Interfac
 			return
 		}
 
-		if dev.Keda {
+		if dev.Keda && !dev.Autocreate {
 			keda.UnpauseKeda(app)
 		}
 
