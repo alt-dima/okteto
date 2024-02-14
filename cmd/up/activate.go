@@ -72,10 +72,6 @@ func (up *upContext) activate() error {
 		return err
 	}
 
-	if up.Dev.Keda {
-		keda.PauseKeda(app)
-	}
-
 	if v, ok := app.ObjectMeta().Annotations[model.OktetoAutoCreateAnnotation]; up.Dev.Autocreate && (!ok || v != model.OktetoUpCmd) {
 		return oktetoErrors.UserError{
 			E:    fmt.Errorf("app '%s' already exist", up.Dev.Name),
@@ -136,6 +132,10 @@ func (up *upContext) activate() error {
 	if err := up.waitUntilAppIsAwaken(ctx, app); err != nil {
 		oktetoLog.Infof("error waiting for the original %s to be awaken: %s", app.Kind(), err.Error())
 		return err
+	}
+
+	if up.Dev.Keda && !up.isRetry && !create {
+		keda.PauseKeda(app)
 	}
 
 	if err := up.devMode(ctx, app, create); err != nil {
