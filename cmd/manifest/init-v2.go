@@ -81,6 +81,8 @@ type InitOpts struct {
 
 	AutoDeploy       bool
 	AutoConfigureDev bool
+
+	ToasterManifestV1 bool
 }
 
 // RunInitV2 initializes a new okteto manifest

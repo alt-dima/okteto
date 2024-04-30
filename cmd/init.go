@@ -85,6 +85,10 @@ func Init(at buildTrackerInterface, insights buildDeployTrackerInterface, ioCtrl
 				if err := mc.RunInitV1(ctx, opts); err != nil {
 					return err
 				}
+			} else if opts.ToasterManifestV1 {
+				if err := mc.RunToasterInitV1(ctx, opts); err != nil {
+					return err
+				}
 			} else {
 				_, err := mc.RunInitV2(ctx, opts)
 				return err
@@ -100,5 +104,6 @@ func Init(at buildTrackerInterface, insights buildDeployTrackerInterface, ioCtrl
 	cmd.Flags().BoolVarP(&opts.Version1, "v1", "", false, "create a v1 okteto manifest: www.okteto.com/docs/0.10/reference/manifest/")
 	cmd.Flags().BoolVarP(&opts.AutoDeploy, "deploy", "", false, "deploy the application after generate the okteto manifest")
 	cmd.Flags().BoolVarP(&opts.AutoConfigureDev, "configure-devs", "", false, "configure devs after deploying the application")
+	cmd.Flags().BoolVarP(&opts.ToasterManifestV1, "toaster", "", true, "create a okteto manifest from Toaster")
 	return cmd
 }
