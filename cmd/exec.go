@@ -34,6 +34,7 @@ import (
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/ssh"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -57,7 +58,7 @@ func Exec(k8sLogger *io.K8sLogger) *cobra.Command {
 			defer cancel()
 
 			manifestOpts := contextCMD.ManifestOptions{Filename: execFlags.manifestPath, Namespace: execFlags.namespace, K8sContext: execFlags.k8sContext}
-			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts)
+			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts, afero.NewOsFs())
 			if err != nil {
 				return err
 			}
@@ -114,7 +115,7 @@ func Exec(k8sLogger *io.K8sLogger) *cobra.Command {
 
 			return err
 		},
-		Args: utils.MinimumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#exec"),
+		Args: utils.MinimumNArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#exec"),
 	}
 
 	cmd.Flags().StringVarP(&execFlags.manifestPath, "file", "f", utils.DefaultManifest, "path to the manifest file")

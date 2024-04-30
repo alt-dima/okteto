@@ -25,6 +25,7 @@ import (
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_SetServiceEnvVars(t *testing.T) {
@@ -98,7 +99,7 @@ func Test_SetServiceEnvVars(t *testing.T) {
 			fakeConfig := fakeConfig{
 				isOkteto: true,
 			}
-			bc := NewFakeBuilder(nil, registry, fakeConfig, &fakeAnalyticsTracker{})
+			bc := NewFakeBuilder(nil, registry, fakeConfig)
 			bc.SetServiceEnvVars(tt.input.service, tt.input.reference)
 
 			registryEnvValue := os.Getenv(registryEnv)
@@ -124,7 +125,9 @@ func TestExpandStackVariables(t *testing.T) {
 		isOkteto: true,
 	}
 
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
+	err := registry.AddImageByName("okteto.global/test-test:a32545ef109a8f1e44b67b9c90727db563e88c5898c228bdb922ce555cec2856")
+	require.NoError(t, err)
+	bc := NewFakeBuilder(builder, registry, fakeConfig)
 	stack := &model.Stack{
 		Services: map[string]*model.Service{
 			"test": {
@@ -137,7 +140,6 @@ func TestExpandStackVariables(t *testing.T) {
 		Name: "test",
 		Build: build.ManifestBuild{
 			"test": &build.Info{
-				Image: "nginx",
 				VolumesToInclude: []build.VolumeMounts{
 					{
 						LocalPath:  "test",
@@ -154,7 +156,7 @@ func TestExpandStackVariables(t *testing.T) {
 		Type: model.StackType,
 		IsV2: true,
 	}
-	err := bc.Build(ctx, &types.BuildOptions{
+	err = bc.Build(ctx, &types.BuildOptions{
 		Manifest: manifest,
 	})
 

@@ -21,11 +21,11 @@ import (
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/okteto/okteto/cmd/build/v1"
+	"github.com/okteto/okteto/cmd/build/basic"
 	"github.com/okteto/okteto/cmd/build/v2/smartbuild"
 	"github.com/okteto/okteto/internal/test"
-	"github.com/okteto/okteto/pkg/analytics"
 	"github.com/okteto/okteto/pkg/build"
+	buildCmd "github.com/okteto/okteto/pkg/cmd/build"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/model"
@@ -146,32 +146,21 @@ func (fr fakeRegistry) IsGlobalRegistry(image string) bool { return false }
 
 func (fr fakeRegistry) GetRegistryAndRepo(image string) (string, string) { return "", "" }
 func (fr fakeRegistry) GetRepoNameAndTag(repo string) (string, string)   { return "", "" }
-func (fr fakeRegistry) CloneGlobalImageToDev(imageWithDigest, tag string) (string, error) {
+func (fr fakeRegistry) CloneGlobalImageToDev(_ string) (string, error) {
 	return "", nil
 }
 
-type fakeAnalyticsTracker struct {
-	metaPayload []*analytics.ImageBuildMetadata
-}
-
-func (a *fakeAnalyticsTracker) TrackImageBuild(meta ...*analytics.ImageBuildMetadata) {
-	a.metaPayload = meta
-}
-
-func NewFakeBuilder(builder OktetoBuilderInterface, registry oktetoRegistryInterface, cfg oktetoBuilderConfigInterface, analyticsTracker analyticsTrackerInterface) *OktetoBuilder {
+func NewFakeBuilder(builder buildCmd.OktetoBuilderInterface, registry oktetoRegistryInterface, cfg oktetoBuilderConfigInterface) *OktetoBuilder {
 	return &OktetoBuilder{
 		Registry:          registry,
-		Builder:           builder,
 		buildEnvironments: make(map[string]string),
-		V1Builder: &v1.OktetoBuilder{
-			Builder:  builder,
-			Registry: registry,
-			IoCtrl:   io.NewIOController(),
+		Builder: basic.Builder{
+			BuildRunner: builder,
+			IoCtrl:      io.NewIOController(),
 		},
-		Config:           cfg,
-		ioCtrl:           io.NewIOController(),
-		analyticsTracker: analyticsTracker,
-		smartBuildCtrl:   smartbuild.NewSmartBuildCtrl(fakeConfigRepo{}, registry, afero.NewMemMapFs(), io.NewIOController()),
+		Config:         cfg,
+		ioCtrl:         io.NewIOController(),
+		smartBuildCtrl: smartbuild.NewSmartBuildCtrl(fakeConfigRepo{}, registry, afero.NewMemMapFs(), io.NewIOController()),
 		oktetoContext: &okteto.ContextStateless{
 			Store: &okteto.ContextStore{
 				Contexts: map[string]*okteto.Context{
@@ -256,42 +245,6 @@ func TestValidateOptions(t *testing.T) {
 	}
 }
 
-func TestOnlyInjectVolumeMountsInOkteto(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-
-	registry := newFakeRegistry()
-	builder := test.NewFakeOktetoBuilder(registry)
-	fakeConfig := fakeConfig{
-		isOkteto: true,
-	}
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
-	manifest := &model.Manifest{
-		Name: "test",
-		Build: build.ManifestBuild{
-			"test": &build.Info{
-				Image: "nginx",
-				VolumesToInclude: []build.VolumeMounts{
-					{
-						LocalPath:  dir,
-						RemotePath: "test",
-					},
-				},
-			},
-		},
-	}
-	image, err := bc.buildServiceImages(ctx, manifest, "test", &types.BuildOptions{})
-
-	// error from the build
-	assert.NoError(t, err)
-	// assert that the name of the image is the dev one
-	assert.Equal(t, "okteto.dev/test-test:okteto-with-volume-mounts", image)
-	// the image is at the fake registry
-	image, err = bc.Registry.GetImageTagWithDigest(image)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, image)
-}
-
 func TestTwoStepsBuild(t *testing.T) {
 	ctx := context.Background()
 
@@ -303,7 +256,7 @@ func TestTwoStepsBuild(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(builder, registry, fakeConfig)
 	manifest := &model.Manifest{
 		Name: "test",
 		Build: build.ManifestBuild{
@@ -321,15 +274,10 @@ func TestTwoStepsBuild(t *testing.T) {
 	}
 	image, err := bc.buildServiceImages(ctx, manifest, "test", &types.BuildOptions{})
 
-	// error from the build
-	assert.NoError(t, err)
-	// assert that the name of the image is the dev one
-	assert.Equal(t, "okteto.dev/test-test:okteto-with-volume-mounts", image)
+	require.NoError(t, err)
+	require.Equal(t, "okteto.dev/test-test:okteto", image)
 	// the image is at the fake registry
 	image, err = bc.Registry.GetImageTagWithDigest(image)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, image)
-	image, err = bc.Registry.GetImageTagWithDigest("okteto.dev/test-test:okteto")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, image)
 }
@@ -345,7 +293,7 @@ func TestBuildWithoutVolumeMountWithoutImage(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(builder, registry, fakeConfig)
 	manifest := &model.Manifest{
 		Name: "test",
 		Build: build.ManifestBuild{
@@ -378,7 +326,7 @@ func TestBuildWithoutVolumeMountWithImage(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(builder, registry, fakeConfig)
 	manifest := &model.Manifest{
 		Name: "test",
 		Build: build.ManifestBuild{
@@ -412,7 +360,7 @@ func TestBuildWithStack(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(builder, registry, fakeConfig)
 	manifest := &model.Manifest{
 		Name: "test",
 		Type: model.StackType,
@@ -434,25 +382,6 @@ func TestBuildWithStack(t *testing.T) {
 	image, err = bc.Registry.GetImageTagWithDigest(image)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, image)
-}
-
-func Test_getAccessibleVolumeMounts(t *testing.T) {
-	existingPath := "./existing-folder"
-	missingPath := "./missing-folder"
-	buildInfo := &build.Info{
-		VolumesToInclude: []build.VolumeMounts{
-			{LocalPath: existingPath, RemotePath: "/data/logs"},
-			{LocalPath: missingPath, RemotePath: "/data/logs"},
-		},
-	}
-	err := os.Mkdir(existingPath, 0750)
-	if err != nil {
-		t.Fatal(err)
-	}
-	volumes := getAccessibleVolumeMounts(buildInfo)
-	err = os.Remove(existingPath)
-	assert.NoError(t, err)
-	assert.Len(t, volumes, 1)
 }
 
 func createDockerfile(t *testing.T) (string, error) {
@@ -479,7 +408,7 @@ func TestBuildWithDependsOn(t *testing.T) {
 		isOkteto: true,
 	}
 
-	bc := NewFakeBuilder(builder, registry, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(builder, registry, fakeConfig)
 	manifest := &model.Manifest{
 		Name: "test",
 		Build: build.ManifestBuild{

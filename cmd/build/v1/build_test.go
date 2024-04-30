@@ -15,62 +15,31 @@ package v1
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/okteto/okteto/internal/test"
 	"github.com/okteto/okteto/pkg/env"
-	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
-type fakeRegistry struct {
-	registry map[string]fakeImage
+type fakeBuildRunner struct {
+	mock.Mock
 }
 
-// fakeImage represents the data from an image
-type fakeImage struct {
-	Registry string
-	Repo     string
-	Tag      string
-	ImageRef string
-	Args     []string
+func (f *fakeBuildRunner) Run(ctx context.Context, buildOptions *types.BuildOptions, ioCtrl *io.Controller) error {
+	args := f.Called(ctx, buildOptions, ioCtrl)
+	return args.Error(0)
 }
-
-func newFakeRegistry() fakeRegistry {
-	return fakeRegistry{
-		registry: map[string]fakeImage{},
-	}
-}
-
-func (fr fakeRegistry) GetImageTagWithDigest(imageTag string) (string, error) {
-	if _, ok := fr.registry[imageTag]; !ok {
-		return "", oktetoErrors.ErrNotFound
-	}
-	return imageTag, nil
-}
-
-func (fr fakeRegistry) AddImageByOpts(opts *types.BuildOptions) error {
-	fr.registry[opts.Tag] = fakeImage{Args: opts.BuildArgs}
-	return nil
-}
-
-func (fr fakeRegistry) HasGlobalPushAccess() (bool, error) { return false, nil }
 
 func TestBuildWithErrorFromDockerfile(t *testing.T) {
 	ctx := context.Background()
 
-	registry := newFakeRegistry()
-	builder := test.NewFakeOktetoBuilder(registry, fmt.Errorf("failed to build error"))
-	bc := &OktetoBuilder{
-		Builder:  builder,
-		Registry: registry,
-		IoCtrl:   io.NewIOController(),
-	}
+	buildRunner := &fakeBuildRunner{}
+	bc := NewBuilder(buildRunner, io.NewIOController())
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
 
@@ -79,26 +48,28 @@ func TestBuildWithErrorFromDockerfile(t *testing.T) {
 		CommandArgs: []string{dir},
 		Tag:         tag,
 	}
+
+	expectedOptions := &types.BuildOptions{
+		Path:        dir,
+		File:        filepath.Join(dir, "Dockerfile"),
+		Tag:         tag,
+		CommandArgs: []string{dir},
+	}
+	buildRunner.On("Run", mock.Anything, expectedOptions, mock.Anything).Return(assert.AnError)
+
 	err = bc.Build(ctx, options)
 
 	// error from the build
 	assert.Error(t, err)
-	// the image is not at the fake registry
-	image, err := bc.Registry.GetImageTagWithDigest(options.Tag)
-	assert.ErrorIs(t, err, oktetoErrors.ErrNotFound)
-	assert.Empty(t, image)
+
+	buildRunner.AssertExpectations(t)
 }
 
 func TestBuildWithErrorFromImageExpansion(t *testing.T) {
 	ctx := context.Background()
 
-	registry := newFakeRegistry()
-	builder := test.NewFakeOktetoBuilder(registry)
-	bc := &OktetoBuilder{
-		Builder:  builder,
-		Registry: registry,
-		IoCtrl:   io.NewIOController(),
-	}
+	buildRunner := &fakeBuildRunner{}
+	bc := NewBuilder(buildRunner, io.NewIOController())
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
 
@@ -112,22 +83,15 @@ func TestBuildWithErrorFromImageExpansion(t *testing.T) {
 	err = bc.Build(ctx, options)
 	// error from the build
 	assert.ErrorAs(t, err, &env.VarExpansionErr{})
-	// the image is not at the fake registry
-	image, err := bc.Registry.GetImageTagWithDigest(options.Tag)
-	assert.ErrorIs(t, err, oktetoErrors.ErrNotFound)
-	assert.Empty(t, image)
+
+	buildRunner.AssertNotCalled(t, "Run", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestBuildWithNoErrorFromDockerfile(t *testing.T) {
 	ctx := context.Background()
 
-	registry := newFakeRegistry()
-	builder := test.NewFakeOktetoBuilder(registry)
-	bc := &OktetoBuilder{
-		Builder:  builder,
-		Registry: registry,
-		IoCtrl:   io.NewIOController(),
-	}
+	buildRunner := &fakeBuildRunner{}
+	bc := NewBuilder(buildRunner, io.NewIOController())
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
 
@@ -137,38 +101,51 @@ func TestBuildWithNoErrorFromDockerfile(t *testing.T) {
 		CommandArgs: []string{dir},
 		Tag:         tag,
 	}
+
+	expectedOptions := &types.BuildOptions{
+		Path:        dir,
+		File:        filepath.Join(dir, "Dockerfile"),
+		Tag:         "okteto.dev/test:unit-test",
+		CommandArgs: []string{dir},
+	}
+	buildRunner.On("Run", mock.Anything, expectedOptions, mock.Anything).Return(nil)
+
 	err = bc.Build(ctx, options)
 	// no error from the build
 	assert.NoError(t, err)
-	// the image is at the fake registry
-	image, err := bc.Registry.GetImageTagWithDigest(options.Tag)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, image)
+
+	buildRunner.AssertExpectations(t)
 }
 
 func TestBuildWithNoErrorFromDockerfileAndNoTag(t *testing.T) {
 	ctx := context.Background()
 
-	registry := newFakeRegistry()
-	builder := test.NewFakeOktetoBuilder(registry)
-	bc := &OktetoBuilder{
-		Builder:  builder,
-		Registry: registry,
-		IoCtrl:   io.NewIOController(),
-	}
+	buildRunner := &fakeBuildRunner{}
+	bc := NewBuilder(buildRunner, io.NewIOController())
 	dir, err := createDockerfile(t)
 	assert.NoError(t, err)
 
 	options := &types.BuildOptions{
 		CommandArgs: []string{dir},
 	}
+
+	expectedOptions := &types.BuildOptions{
+		Path:        dir,
+		File:        filepath.Join(dir, "Dockerfile"),
+		CommandArgs: []string{dir},
+	}
+	buildRunner.On("Run", mock.Anything, expectedOptions, mock.Anything).Return(nil)
+
 	err = bc.Build(ctx, options)
 	// no error from the build
 	assert.NoError(t, err)
-	// the image is not at the fake registry
-	image, err := bc.Registry.GetImageTagWithDigest("")
-	assert.ErrorIs(t, err, oktetoErrors.ErrNotFound)
-	assert.Empty(t, image)
+
+	buildRunner.AssertExpectations(t)
+}
+
+func TestIsV1(t *testing.T) {
+	bc := &OktetoBuilder{}
+	assert.True(t, bc.IsV1())
 }
 
 func createDockerfile(t *testing.T) (string, error) {

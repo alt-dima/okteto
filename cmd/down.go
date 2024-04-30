@@ -35,6 +35,7 @@ import (
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/syncthing"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 )
@@ -50,7 +51,7 @@ func Down(k8sLogsCtrl *io.K8sLogger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "down [service]",
 		Short: "Deactivate your development container",
-		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#down"),
+		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#down"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
@@ -62,7 +63,7 @@ func Down(k8sLogsCtrl *io.K8sLogger) *cobra.Command {
 				}
 				devPath = model.GetManifestPathFromWorkdir(devPath, workdir)
 			}
-			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts)
+			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts, afero.NewOsFs())
 			if err != nil {
 				return err
 			}

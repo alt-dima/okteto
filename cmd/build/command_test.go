@@ -14,6 +14,7 @@
 package build
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,8 +30,10 @@ import (
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
 	"github.com/okteto/okteto/pkg/types"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/tools/clientcmd/api"
 )
 
 type fakeRegistry struct {
@@ -99,7 +102,7 @@ func (fr fakeRegistry) IsGlobalRegistry(image string) bool { return false }
 
 func (fr fakeRegistry) GetRegistryAndRepo(image string) (string, string) { return "", "" }
 func (fr fakeRegistry) GetRepoNameAndTag(repo string) (string, string)   { return "", "" }
-func (fr fakeRegistry) CloneGlobalImageToDev(imageWithDigest, tag string) (string, error) {
+func (fr fakeRegistry) CloneGlobalImageToDev(_ string) (string, error) {
 	return "", nil
 }
 
@@ -115,21 +118,21 @@ var fakeManifestV2 *model.Manifest = &model.Manifest{
 	IsV2: true,
 }
 
-func getManifestWithError(_ string) (*model.Manifest, error) {
+func getManifestWithError(_ string, _ afero.Fs) (*model.Manifest, error) {
 	return nil, assert.AnError
 }
 
-func getManifestWithInvalidManifestError(_ string) (*model.Manifest, error) {
+func getManifestWithInvalidManifestError(_ string, _ afero.Fs) (*model.Manifest, error) {
 	return nil, oktetoErrors.ErrInvalidManifest
 }
 
-func getFakeManifestV1(_ string) (*model.Manifest, error) {
+func getFakeManifestV1(_ string, _ afero.Fs) (*model.Manifest, error) {
 	manifestV1 := *fakeManifestV2
 	manifestV1.IsV2 = false
 	return &manifestV1, nil
 }
 
-func getFakeManifestV2(_ string) (*model.Manifest, error) {
+func getFakeManifestV2(_ string, _ afero.Fs) (*model.Manifest, error) {
 	return fakeManifestV2, nil
 }
 
@@ -216,7 +219,7 @@ func TestBuildIsManifestV2(t *testing.T) {
 		GetManifest: getFakeManifestV2,
 	}
 
-	manifest, err := bc.GetManifest("")
+	manifest, err := bc.GetManifest("", afero.NewMemMapFs())
 	assert.Nil(t, err)
 	assert.Equal(t, manifest, fakeManifestV2)
 }
@@ -226,7 +229,7 @@ func TestBuildFromDockerfile(t *testing.T) {
 		GetManifest: getManifestWithError,
 	}
 
-	manifest, err := bc.GetManifest("")
+	manifest, err := bc.GetManifest("", afero.NewMemMapFs())
 	assert.NotNil(t, err)
 	assert.Nil(t, manifest)
 }
@@ -236,7 +239,7 @@ func TestBuildErrIfInvalidManifest(t *testing.T) {
 		GetManifest: getManifestWithInvalidManifestError,
 	}
 
-	manifest, err := bc.GetManifest("")
+	manifest, err := bc.GetManifest("", afero.NewMemMapFs())
 	assert.NotNil(t, err)
 	assert.Nil(t, manifest)
 }
@@ -249,6 +252,7 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 			Contexts: map[string]*okteto.Context{
 				"test": {
 					Namespace: "test",
+					Cfg:       &api.Config{},
 				},
 			},
 			CurrentContext: "test",
@@ -268,9 +272,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "Manifest error fallback to v1",
 			buildCommand: &Command{
-				GetManifest: getManifestWithInvalidManifestError,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getManifestWithInvalidManifestError,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options:           &types.BuildOptions{},
 			expectedError:     false,
@@ -279,9 +285,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "Manifest error",
 			buildCommand: &Command{
-				GetManifest: getManifestWithInvalidManifestError,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getManifestWithInvalidManifestError,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options: &types.BuildOptions{
 				File: "okteto.yml",
@@ -292,9 +300,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "Builder error. Dockerfile malformed",
 			buildCommand: &Command{
-				GetManifest: getManifestWithInvalidManifestError,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getManifestWithInvalidManifestError,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options: &types.BuildOptions{
 				File: malformedDockerfile,
@@ -305,9 +315,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "Builder error. Invalid manifest/Dockerfile correct",
 			buildCommand: &Command{
-				GetManifest: getManifestWithInvalidManifestError,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getManifestWithInvalidManifestError,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options: &types.BuildOptions{
 				File: dockerfile,
@@ -318,9 +330,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "BuilderV2 called.",
 			buildCommand: &Command{
-				GetManifest: getFakeManifestV2,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getFakeManifestV2,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options:           &types.BuildOptions{},
 			expectedError:     false,
@@ -329,9 +343,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "Manifest valid but BuilderV1 fallback.",
 			buildCommand: &Command{
-				GetManifest: getFakeManifestV1,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getFakeManifestV1,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options:           &types.BuildOptions{},
 			expectedError:     false,
@@ -340,9 +356,11 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 		{
 			name: "Manifest error. BuilderV1 fallback.",
 			buildCommand: &Command{
-				GetManifest: getManifestWithError,
-				Registry:    newFakeRegistry(),
-				ioCtrl:      io.NewIOController(),
+				GetManifest:      getManifestWithError,
+				Registry:         newFakeRegistry(),
+				ioCtrl:           io.NewIOController(),
+				analyticsTracker: fakeAnalyticsTracker{},
+				insights:         fakeAnalyticsTracker{},
 			},
 			options:           &types.BuildOptions{},
 			expectedError:     false,
@@ -387,7 +405,7 @@ func TestBuilderIsProperlyGenerated(t *testing.T) {
 
 type fakeAnalyticsTracker struct{}
 
-func (fakeAnalyticsTracker) TrackImageBuild(...*analytics.ImageBuildMetadata) {}
+func (fakeAnalyticsTracker) TrackImageBuild(context.Context, *analytics.ImageBuildMetadata) {}
 
 func Test_NewBuildCommand(t *testing.T) {
 	okCtx := &okteto.ContextStateless{
@@ -400,7 +418,7 @@ func Test_NewBuildCommand(t *testing.T) {
 			CurrentContext: "test",
 		},
 	}
-	got := NewBuildCommand(io.NewIOController(), fakeAnalyticsTracker{}, okCtx, nil)
+	got := NewBuildCommand(io.NewIOController(), fakeAnalyticsTracker{}, fakeAnalyticsTracker{}, okCtx, nil)
 	require.IsType(t, &Command{}, got)
 	require.NotNil(t, got.GetManifest)
 	require.NotNil(t, got.Builder)

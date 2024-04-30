@@ -37,7 +37,7 @@ type fakeGetSvcs struct {
 	svcs []string
 }
 
-func (fb fakeBuilderV2) GetServicesToBuild(ctx context.Context, manifest *model.Manifest, svcToDeploy []string) ([]string, error) {
+func (fb fakeBuilderV2) GetServicesToBuildForImage(ctx context.Context, manifest *model.Manifest, imgFinder model.ImageFromManifest) ([]string, error) {
 	return fb.getSvcs.svcs, fb.getSvcs.err
 }
 
@@ -184,11 +184,11 @@ func TestBuildNecessaryImages(t *testing.T) {
 
 type fakeAnalyticsTracker struct{}
 
-func (fakeAnalyticsTracker) TrackImageBuild(...*analytics.ImageBuildMetadata) {}
-func (fakeAnalyticsTracker) TrackDestroy(analytics.DestroyMetadata)           {}
+func (fakeAnalyticsTracker) TrackImageBuild(context.Context, *analytics.ImageBuildMetadata) {}
+func (fakeAnalyticsTracker) TrackDestroy(analytics.DestroyMetadata)                         {}
 
 func Test_newBuildCtrl(t *testing.T) {
-	got := newBuildCtrl("test-control", &fakeAnalyticsTracker{}, io.NewIOController())
+	got := newBuildCtrl("test-control", &fakeAnalyticsTracker{}, &fakeAnalyticsTracker{}, io.NewIOController())
 
 	require.Equal(t, "test-control", got.name)
 	require.IsType(t, got.builder, &v2.OktetoBuilder{})

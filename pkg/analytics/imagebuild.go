@@ -14,6 +14,7 @@
 package analytics
 
 import (
+	"context"
 	"time"
 )
 
@@ -23,9 +24,12 @@ const (
 
 type ImageBuildMetadata struct {
 	Name                     string
+	Namespace                string
+	DevenvName               string
 	RepoURL                  string
 	RepoHash                 string
 	BuildContextHash         string
+	Initiator                string
 	RepoHashDuration         time.Duration
 	BuildContextHashDuration time.Duration
 	CacheHitDuration         time.Duration
@@ -49,6 +53,7 @@ func (m *ImageBuildMetadata) toProps() map[string]interface{} {
 		"buildDurationSeconds":            m.BuildDuration.Seconds(),
 		"buildContextHash":                m.BuildContextHash,
 		"buildContextHashDurationSeconds": m.BuildContextHashDuration.Seconds(),
+		"initiator":                       m.Initiator,
 	}
 
 	if m.Name != "" {
@@ -61,8 +66,6 @@ func (m *ImageBuildMetadata) toProps() map[string]interface{} {
 	return props
 }
 
-func (a *Tracker) TrackImageBuild(metaList ...*ImageBuildMetadata) {
-	for _, m := range metaList {
-		a.trackFn(imageBuildEvent, m.Success, m.toProps())
-	}
+func (a *Tracker) TrackImageBuild(_ context.Context, m *ImageBuildMetadata) {
+	a.trackFn(imageBuildEvent, m.Success, m.toProps())
 }

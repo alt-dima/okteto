@@ -86,7 +86,7 @@ func deploy(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Deploy an okteto pipeline",
-		Args:  utils.NoArgsAccepted("https://www.okteto.com/docs/reference/cli/#deploy-1"),
+		Args:  utils.NoArgsAccepted("https://www.okteto.com/docs/reference/okteto-cli/#deploy-1"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctxResource := &model.ContextResource{}
 			if err := ctxResource.UpdateNamespace(flags.namespace); err != nil {
@@ -139,7 +139,6 @@ func deploy(ctx context.Context) *cobra.Command {
 
 // ExecuteDeployPipeline executes deploy pipeline given a set of options
 func (pc *Command) ExecuteDeployPipeline(ctx context.Context, opts *DeployOptions) error {
-
 	if err := opts.setDefaults(); err != nil {
 		return fmt.Errorf("could not set default values for options: %w", err)
 	}
@@ -260,7 +259,8 @@ func setEnvsFromDependency(cmap *v1.ConfigMap, envSetter envSetter) error {
 		return nil
 	}
 
-	name := cmap.Name
+	name := strings.TrimPrefix(cmap.Name, pipeline.ConfigmapNamePrefix)
+	sanitizedName := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 
 	decodedEnvs, err := base64.StdEncoding.DecodeString(dependencyEnvsEncoded)
 	if err != nil {
@@ -271,7 +271,7 @@ func setEnvsFromDependency(cmap *v1.ConfigMap, envSetter envSetter) error {
 		return err
 	}
 	for envKey, envValue := range envsToSet {
-		envName := fmt.Sprintf(dependencyEnvTemplate, strings.ToUpper(name), envKey)
+		envName := fmt.Sprintf(dependencyEnvTemplate, strings.ToUpper(sanitizedName), envKey)
 		if err := envSetter(envName, envValue); err != nil {
 			return err
 		}

@@ -31,6 +31,7 @@ import (
 	"github.com/okteto/okteto/pkg/k8s/kubeconfig"
 	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/okteto"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stern/stern/stern"
 )
@@ -64,7 +65,7 @@ func Logs(ctx context.Context, k8sLogger *io.K8sLogger) *cobra.Command {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
 
-			manifest, err := contextCMD.LoadManifestWithContext(ctx, contextCMD.ManifestOptions{Filename: options.ManifestPath, Namespace: options.Namespace, K8sContext: options.Context})
+			manifest, err := contextCMD.LoadManifestWithContext(ctx, contextCMD.ManifestOptions{Filename: options.ManifestPath, Namespace: options.Namespace, K8sContext: options.Context}, afero.NewOsFs())
 			if err != nil {
 				return err
 			}
@@ -122,7 +123,7 @@ func Logs(ctx context.Context, k8sLogger *io.K8sLogger) *cobra.Command {
 			}
 			return nil
 		},
-		Args: utils.MaximumNArgsAccepted(1, "https://www.okteto.com/docs/reference/cli/#logs"),
+		Args: utils.MaximumNArgsAccepted(1, "https://www.okteto.com/docs/reference/okteto-cli/#logs"),
 	}
 
 	cmd.Flags().BoolVarP(&options.All, "all", "a", false, "fetch logs from the whole namespace")
