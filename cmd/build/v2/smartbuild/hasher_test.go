@@ -35,7 +35,7 @@ func TestServiceHasher_HashProjectCommit(t *testing.T) {
 			repoCtrl: fakeConfigRepo{
 				sha: "testsha",
 			},
-			expectedHash: "cf0ff0bb100ae8a121de62276a5004349dcd6b349ceaecb3ba75ac344152dbe0",
+			expectedHash: "832d66070268d5a47860e9bd4402f504a1c0fe8d0c2dc1ecf814af610de72f0e",
 			expectedErr:  nil,
 		},
 		{
@@ -60,9 +60,9 @@ func TestServiceHasher_HashProjectCommit(t *testing.T) {
 
 func TestServiceHasher_HashBuildContext(t *testing.T) {
 	fakeErr := errors.New("fake error")
+	serviceName := "fake-service"
 	tests := []struct {
 		repoCtrl     repositoryCommitRetriever
-		expectedErr  error
 		name         string
 		expectedHash string
 	}{
@@ -71,25 +71,29 @@ func TestServiceHasher_HashBuildContext(t *testing.T) {
 			repoCtrl: fakeConfigRepo{
 				sha: "testtreehash",
 			},
-			expectedHash: "52d0cacde546dd525296ab1893ea73b08e3033538c235ef3ac0a451aa6810ef0",
-			expectedErr:  nil,
+			expectedHash: "b6f9d71cf55933c6e385102e196522fd73c279c1edaa919b565706fb0bc3d8ce",
 		},
 		{
 			name: "error",
 			repoCtrl: fakeConfigRepo{
 				err: fakeErr,
 			},
-			expectedHash: "",
-			expectedErr:  fakeErr,
+			expectedHash: "11cf9a064fe9b8419441515afbc33d22257ce11269ecbea211575f8cf4a33fac",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sh := newServiceHasher(tt.repoCtrl, afero.NewMemMapFs())
-			hash, err := sh.hashBuildContext(&build.Info{})
+			sh := &serviceHasher{
+				gitRepoCtrl: tt.repoCtrl,
+				fs:          afero.NewMemMapFs(),
+				getCurrentTimestampNano: func() int64 {
+					return int64(12312345252)
+				},
+				serviceShaCache: map[string]string{},
+			}
+			hash := sh.hashWithBuildContext(&build.Info{}, serviceName)
 			assert.Equal(t, tt.expectedHash, hash)
-			assert.ErrorIs(t, err, tt.expectedErr)
 		})
 	}
 }
@@ -119,18 +123,9 @@ func TestGetBuildContextHashInCache(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sh := newServiceHasher(nil, afero.NewMemMapFs())
-			sh.buildContextCache["test"] = tt.cacheValue
-			result := sh.getBuildContextHashInCache(tt.buildContext)
+			sh.serviceShaCache["test"] = tt.cacheValue
+			result := sh.getServiceShaInCache(tt.buildContext)
 			assert.Equal(t, tt.expectedResult, result)
 		})
 	}
-}
-
-func TestGetProjectCommitHashInCache(t *testing.T) {
-	sh := newServiceHasher(nil, afero.NewMemMapFs())
-	result := sh.getProjectCommitHashInCache()
-	assert.Equal(t, "", result)
-	sh.projectCommit = "hash123"
-	result = sh.getProjectCommitHashInCache()
-	assert.Equal(t, "hash123", result)
 }

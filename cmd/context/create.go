@@ -35,6 +35,7 @@ import (
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/types"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -90,7 +91,7 @@ func CreateCMD() *cobra.Command {
 	cmd := &cobra.Command{
 		Hidden: true,
 		Use:    "create [cluster-url]",
-		Args:   utils.ExactArgsAccepted(1, "https://okteto.com/docs/reference/cli/#context"),
+		Args:   utils.ExactArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#context"),
 		Short:  "Add a context",
 		Long: `Add a context
 
@@ -184,7 +185,10 @@ func (c *Command) UseContext(ctx context.Context, ctxOptions *Options) error {
 	}
 
 	ctxStore.CurrentContext = ctxOptions.Context
-	c.initEnvVars()
+	err := c.loadDotEnv(afero.NewOsFs(), os.Setenv)
+	if err != nil {
+		oktetoLog.Warning("Failed to load .env file: %s", err)
+	}
 
 	if ctxOptions.IsOkteto {
 		if err := c.initOktetoContext(ctx, ctxOptions); err != nil {
@@ -339,7 +343,7 @@ func (c *Command) initOktetoContext(ctx context.Context, ctxOptions *Options) er
 	okteto.GetContext().IsTrial = clusterMetadata.IsTrialLicense
 	okteto.GetContext().CompanyName = clusterMetadata.CompanyName
 
-	setSecrets(userContext.Secrets)
+	exportPlatformVariablesToEnv(userContext.PlatformVariables)
 
 	os.Setenv(model.OktetoUserNameEnvVar, okteto.GetContext().Username)
 
@@ -355,6 +359,7 @@ func getLoggedUserContext(ctx context.Context, c *Command, ctxOptions *Options) 
 	ctxOptions.Token = user.Token
 
 	okteto.GetContext().Token = user.Token
+	okteto.SetInsecureSkipTLSVerifyPolicy(okteto.GetContext().IsStoredAsInsecure)
 
 	if ctxOptions.Namespace == "" {
 		ctxOptions.Namespace = user.Namespace
@@ -464,12 +469,30 @@ func (c Command) getUserContext(ctx context.Context, ctxName, ns, token string) 
 	return nil, oktetoErrors.ErrInternalServerError
 }
 
-func (*Command) initEnvVars() {
-	if filesystem.FileExists(".env") {
-		if err := godotenv.Load(); err != nil {
-			oktetoLog.Infof("error loading .env file: %s", err.Error())
+func (*Command) loadDotEnv(fs afero.Fs, setEnvFunc func(key, value string) error) error {
+	dotEnvFile := ".env"
+	if filesystem.FileExistsWithFilesystem(dotEnvFile, fs) {
+		content, err := afero.ReadFile(fs, dotEnvFile)
+		if err != nil {
+			return fmt.Errorf("error reading file: %w", err)
+		}
+		expanded, err := env.ExpandEnv(string(content))
+		if err != nil {
+			return fmt.Errorf("error expanding dot env file: %w", err)
+		}
+		vars, err := godotenv.UnmarshalBytes([]byte(expanded))
+		if err != nil {
+			return fmt.Errorf("error parsing dot env file: %w", err)
+		}
+		for k, v := range vars {
+			err := setEnvFunc(k, v)
+			if err != nil {
+				return fmt.Errorf("error setting env var: %w", err)
+			}
+			oktetoLog.AddMaskedWord(v)
 		}
 	}
+	return nil
 }
 
 func isUrl(u string) bool {

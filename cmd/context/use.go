@@ -21,12 +21,12 @@ import (
 
 	"github.com/okteto/okteto/cmd/utils"
 	"github.com/okteto/okteto/pkg/analytics"
+	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
 	"github.com/okteto/okteto/pkg/k8s/kubeconfig"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
-	"github.com/okteto/okteto/pkg/types"
 	"github.com/spf13/cobra"
 )
 
@@ -41,7 +41,7 @@ func Use() *cobra.Command {
 	ctxOptions := &Options{}
 	cmd := &cobra.Command{
 		Use:   "use [<url>|Kubernetes context]",
-		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#use"),
+		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#use"),
 		Short: "Set the default context",
 		Long: `Set the default context
 
@@ -158,6 +158,9 @@ func (c *Command) RunStateless(ctx context.Context, ctxOptions *Options) (*oktet
 	}
 
 	cfg := okteto.GetContext().Cfg.DeepCopy()
+	// Storing previous global namespace gotten after executing c.Run as it is memory, but after reading the
+	// context store from path that is lost
+	globalNamespace := okteto.GetContext().GlobalNamespace
 
 	oktetoContextStore := okteto.GetContextStoreFromStorePath()
 
@@ -166,6 +169,8 @@ func (c *Command) RunStateless(ctx context.Context, ctxOptions *Options) (*oktet
 	}
 
 	oktetoContextStateless.SetCurrentCfg(cfg)
+	// Setting the global namespace because it is missing after reading again the context from the store path
+	oktetoContextStateless.SetGlobalNamespace(globalNamespace)
 
 	return oktetoContextStateless, nil
 
@@ -221,17 +226,17 @@ func getContext(ctxOptions *Options) (string, error) {
 	return oktetoContext, nil
 }
 
-func setSecrets(secrets []types.Secret) {
-	for _, secret := range secrets {
-		value, exists := os.LookupEnv(secret.Name)
+func exportPlatformVariablesToEnv(variables []env.Var) {
+	for _, v := range variables {
+		value, exists := os.LookupEnv(v.Name)
 		if exists {
-			if value != secret.Value {
-				oktetoLog.Warning("$%s secret is being overridden by a local environment variable by the same name.", secret.Name)
+			if value != v.Value {
+				oktetoLog.Warning("Okteto Variable '%s' is overridden by a local environment variable with the same name", v.Name)
 			}
 			oktetoLog.AddMaskedWord(value)
 			continue
 		}
-		os.Setenv(secret.Name, secret.Value)
-		oktetoLog.AddMaskedWord(secret.Value)
+		os.Setenv(v.Name, v.Value)
+		oktetoLog.AddMaskedWord(v.Value)
 	}
 }

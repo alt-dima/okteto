@@ -27,6 +27,7 @@ import (
 	"github.com/okteto/okteto/pkg/env"
 	"github.com/okteto/okteto/pkg/externalresource"
 	"github.com/okteto/okteto/pkg/model/forward"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	yaml "gopkg.in/yaml.v2"
@@ -1069,6 +1070,7 @@ deploy:
 				Context:      "context-to-use",
 				IsV2:         true,
 				Type:         OktetoManifestType,
+				Fs:           afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},
@@ -1234,6 +1236,7 @@ dev:
 						Mode:        constants.OktetoSyncModeFieldValue,
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 
 			isErrorExpected: false,
@@ -1251,6 +1254,7 @@ sync:
 				Dependencies:  map[string]*deps.Dependency{},
 				External:      externalresource.Section{},
 				GlobalForward: []forward.GlobalForward{},
+				Test:          ManifestTests{},
 				Dev: map[string]*Dev{
 					"test": {
 						Name: "test",
@@ -1319,6 +1323,7 @@ sync:
 						Mode:        constants.OktetoSyncModeFieldValue,
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},
@@ -1337,6 +1342,7 @@ services:
 				Dependencies:  map[string]*deps.Dependency{},
 				GlobalForward: []forward.GlobalForward{},
 				External:      externalresource.Section{},
+				Test:          ManifestTests{},
 				Dev: map[string]*Dev{
 					"test": {
 						Name: "test",
@@ -1442,6 +1448,7 @@ services:
 						Mode:        constants.OktetoSyncModeFieldValue,
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},
@@ -1539,6 +1546,7 @@ dev:
 						Mode:        constants.OktetoSyncModeFieldValue,
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},
@@ -1694,6 +1702,7 @@ dev:
 						Mode:        constants.OktetoSyncModeFieldValue,
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},
@@ -1739,6 +1748,7 @@ deploy:
 						},
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},
@@ -1767,6 +1777,7 @@ devs:
 						},
 					},
 				},
+				Fs: afero.NewOsFs(),
 			},
 			isErrorExpected: false,
 		},

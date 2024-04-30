@@ -49,17 +49,18 @@ const (
 
 // Command defines the build command
 type Command struct {
-	GetManifest func(path string) (*model.Manifest, error)
+	GetManifest func(path string, fs afero.Fs) (*model.Manifest, error)
 
 	Builder          buildCmd.OktetoBuilderInterface
 	Registry         registryInterface
-	analyticsTracker analyticsTrackerInterface
+	analyticsTracker buildTrackerInterface
+	insights         buildTrackerInterface
 	ioCtrl           *io.Controller
 	k8slogger        *io.K8sLogger
 }
 
-type analyticsTrackerInterface interface {
-	TrackImageBuild(meta ...*analytics.ImageBuildMetadata)
+type buildTrackerInterface interface {
+	TrackImageBuild(ctx context.Context, meta *analytics.ImageBuildMetadata)
 }
 
 type registryInterface interface {
@@ -71,32 +72,30 @@ type registryInterface interface {
 
 	GetRegistryAndRepo(image string) (string, string)
 	GetRepoNameAndTag(repo string) (string, string)
-	CloneGlobalImageToDev(imageWithDigest, tag string) (string, error)
+	CloneGlobalImageToDev(imageWithDigest string) (string, error)
 }
 
 // NewBuildCommand creates a struct to run all build methods
-func NewBuildCommand(ioCtrl *io.Controller, analyticsTracker analyticsTrackerInterface, okCtx *okteto.ContextStateless, k8slogger *io.K8sLogger) *Command {
+func NewBuildCommand(ioCtrl *io.Controller, analyticsTracker, insights buildTrackerInterface, okCtx *okteto.ContextStateless, k8slogger *io.K8sLogger) *Command {
 
 	return &Command{
-		GetManifest: model.GetManifestV2,
-		Builder: &buildCmd.OktetoBuilder{
-			OktetoContext: okCtx,
-			Fs:            afero.NewOsFs(),
-		},
+		GetManifest:      model.GetManifestV2,
+		Builder:          buildCmd.NewOktetoBuilder(okCtx, afero.NewOsFs()),
 		Registry:         registry.NewOktetoRegistry(buildCmd.GetRegistryConfigFromOktetoConfig(okCtx)),
 		ioCtrl:           ioCtrl,
 		k8slogger:        k8slogger,
 		analyticsTracker: analyticsTracker,
+		insights:         insights,
 	}
 }
 
 const (
 	maxV1CommandArgs = 1
-	docsURL          = "https://okteto.com/docs/reference/cli/#build"
+	docsURL          = "https://okteto.com/docs/reference/okteto-cli/#build"
 )
 
 // Build build and optionally push a Docker image
-func Build(ctx context.Context, ioCtrl *io.Controller, at analyticsTrackerInterface, k8slogger *io.K8sLogger) *cobra.Command {
+func Build(ctx context.Context, ioCtrl *io.Controller, at, insights buildTrackerInterface, k8slogger *io.K8sLogger) *cobra.Command {
 	options := &types.BuildOptions{}
 	cmd := &cobra.Command{
 		Use:   "build [service...]",
@@ -113,7 +112,7 @@ func Build(ctx context.Context, ioCtrl *io.Controller, at analyticsTrackerInterf
 
 			ioCtrl.Logger().Info("context loaded")
 
-			bc := NewBuildCommand(ioCtrl, at, oktetoContext, k8slogger)
+			bc := NewBuildCommand(ioCtrl, at, insights, oktetoContext, k8slogger)
 
 			builder, err := bc.getBuilder(options, oktetoContext)
 
@@ -150,10 +149,14 @@ func Build(ctx context.Context, ioCtrl *io.Controller, at analyticsTrackerInterf
 	return cmd
 }
 
+// getBuilder returns the proper builder (V1 or V2) based on the manifest. The following rules are applied:
+//   - If the manifest is not found or there is any error getting the manifest, the builder fallsback to V1
+//   - If the manifest is found and it is a V2 manifest and the build section has some image, the builder is V2
+//   - If the manifest is found and it is a V1 manifest or the build section is empty, the builder fallsback to V1
 func (bc *Command) getBuilder(options *types.BuildOptions, okCtx *okteto.ContextStateless) (Builder, error) {
 	var builder Builder
 
-	manifest, err := bc.GetManifest(options.File)
+	manifest, err := bc.GetManifest(options.File, afero.NewOsFs())
 	if err != nil {
 		if options.File != "" && errors.Is(err, oktetoErrors.ErrInvalidManifest) && validateDockerfile(options.File) != nil {
 			return nil, err
@@ -162,12 +165,16 @@ func (bc *Command) getBuilder(options *types.BuildOptions, okCtx *okteto.Context
 		bc.ioCtrl.Logger().Infof("manifest located at %s is not v2 compatible: %s", options.File, err)
 		bc.ioCtrl.Logger().Info("falling back to building as a v1 manifest")
 
-		builder = buildv1.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl)
+		builder = buildv1.NewBuilder(bc.Builder, bc.ioCtrl)
 	} else {
 		if isBuildV2(manifest) {
-			builder = buildv2.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl, bc.analyticsTracker, okCtx, bc.k8slogger)
+			callbacks := []buildv2.OnBuildFinish{
+				bc.analyticsTracker.TrackImageBuild,
+				bc.insights.TrackImageBuild,
+			}
+			builder = buildv2.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl, okCtx, bc.k8slogger, callbacks)
 		} else {
-			builder = buildv1.NewBuilder(bc.Builder, bc.Registry, bc.ioCtrl)
+			builder = buildv1.NewBuilder(bc.Builder, bc.ioCtrl)
 		}
 	}
 
@@ -177,6 +184,7 @@ func (bc *Command) getBuilder(options *types.BuildOptions, okCtx *okteto.Context
 }
 
 func isBuildV2(m *model.Manifest) bool {
+	// A manifest has the isV2 set to true if the manifest is parsed as a V2 manifest or in case of stacks and/or compose files
 	return m.IsV2 && len(m.Build) != 0
 }
 

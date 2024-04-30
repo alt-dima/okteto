@@ -20,11 +20,13 @@ import (
 
 type oktetoRemoteRepoController struct {
 	gitCommit string
+	url       string
 }
 
-func newOktetoRemoteRepoController(localCommit string) oktetoRemoteRepoController {
+func newOktetoRemoteRepoController(localCommit string, url string) oktetoRemoteRepoController {
 	return oktetoRemoteRepoController{
 		gitCommit: localCommit,
+		url:       url,
 	}
 }
 
@@ -36,10 +38,14 @@ func (or oktetoRemoteRepoController) getSHA() (string, error) {
 	return or.gitCommit, nil
 }
 
-func (or oktetoRemoteRepoController) GetLatestDirCommit(string) (string, error) {
+func (or oktetoRemoteRepoController) GetLatestDirSHA(string) (string, error) {
 	return "", fmt.Errorf("not-implemented")
 }
 
 func (or oktetoRemoteRepoController) GetDiffHash(string) (string, error) {
 	return "", fmt.Errorf("not-implemented")
+}
+
+func (or oktetoRemoteRepoController) getRepoURL() (string, error) {
+	return or.url, nil
 }

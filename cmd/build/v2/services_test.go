@@ -27,11 +27,11 @@ func TestNoneOfTheServicesBuilt(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, []string{})
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, []string{})
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, len(fakeManifest.Build)-len(alreadyBuilt), len(toBuild))
@@ -42,11 +42,11 @@ func TestAllServicesAlreadyBuilt(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
-	alreadyBuilt := []string{"test/test-1", "okteto.dev/test-test-2:okteto-with-volume-mounts", "okteto.dev/test-test-3:okteto", "okteto.dev/test-test-4:okteto-with-volume-mounts"}
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
+	alreadyBuilt := []string{"test/test-1", "test/test-2", "okteto.dev/test-test-3:okteto", "okteto.dev/test-test-4:okteto"}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, []string{})
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, []string{})
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, len(fakeManifest.Build)-len(alreadyBuilt), len(toBuild))
@@ -57,12 +57,12 @@ func TestServicesNotAreAlreadyBuilt(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{"test/test-1"}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
 	toBuildSvcsInput := []string{"test-1", "test-2"}
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, toBuildSvcsInput)
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, toBuildSvcsInput)
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, len(toBuildSvcsInput)-len(alreadyBuilt), len(toBuild))
@@ -73,12 +73,12 @@ func TestNoServiceBuilt(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{"test/test-1"}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
 	toBuildSvcsInput := []string{"test-1"}
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, toBuildSvcsInput)
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, toBuildSvcsInput)
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, len(toBuildSvcsInput)-len(alreadyBuilt), len(toBuild))
@@ -89,7 +89,7 @@ func TestServicesNotInStack(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: false,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
@@ -122,7 +122,7 @@ func TestServicesNotInStack(t *testing.T) {
 	}
 	toBuildSvcsInput := []string{}
 
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, toBuildSvcsInput)
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, toBuildSvcsInput)
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, 0, len(toBuild))
@@ -133,7 +133,7 @@ func TestServicesNotOktetoWithStack(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{"test/test-1"}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
@@ -148,7 +148,7 @@ func TestServicesNotOktetoWithStack(t *testing.T) {
 	}}
 	toBuildSvcsInput := []string{"test-1"}
 
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, toBuildSvcsInput)
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, toBuildSvcsInput)
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, len(toBuildSvcsInput)-len(alreadyBuilt), len(toBuild))
@@ -159,11 +159,11 @@ func TestAllServicesAlreadyBuiltWithSubset(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, []string{"test-1"})
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, []string{"test-1"})
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, 1, len(toBuild))
@@ -174,11 +174,11 @@ func TestServicesNotAreAlreadyBuiltWithSubset(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{"test/test-1"}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, []string{"test-1"})
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, []string{"test-1"})
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, 0, len(toBuild))
@@ -189,12 +189,12 @@ func TestServicesBuildSection(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
 	fakeManifest.Build = map[string]*build.Info{}
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, []string{})
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, []string{})
 	// should not throw error
 	require.NoError(t, err)
 	require.Empty(t, toBuild)
@@ -205,11 +205,11 @@ func TestNoServiceBuiltWithSubset(t *testing.T) {
 	fakeConfig := fakeConfig{
 		isOkteto: true,
 	}
-	bc := NewFakeBuilder(nil, fakeReg, fakeConfig, &fakeAnalyticsTracker{})
+	bc := NewFakeBuilder(nil, fakeReg, fakeConfig)
 	alreadyBuilt := []string{"test/test-1", "test/test-2"}
 	require.NoError(t, fakeReg.AddImageByName(alreadyBuilt...))
 	ctx := context.Background()
-	toBuild, err := bc.GetServicesToBuild(ctx, fakeManifest, []string{"test-1"})
+	toBuild, err := bc.GetServicesToBuildDuringDeploy(ctx, fakeManifest, []string{"test-1"})
 	// should not throw error
 	require.NoError(t, err)
 	require.Equal(t, 0, len(toBuild))

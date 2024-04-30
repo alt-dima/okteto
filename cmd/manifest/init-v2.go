@@ -43,15 +43,25 @@ import (
 	"github.com/spf13/afero"
 )
 
-type analyticsTrackerInterface interface {
-	TrackImageBuild(meta ...*analytics.ImageBuildMetadata)
+type buildTrackerInterface interface {
+	TrackImageBuild(ctx context.Context, meta *analytics.ImageBuildMetadata)
+}
+
+type deployTrackerInterface interface {
+	TrackDeploy(ctx context.Context, name, namespace string, success bool)
+}
+
+type buildDeployTrackerInterface interface {
+	buildTrackerInterface
+	deployTrackerInterface
 }
 
 // Command has all the namespaces subcommands
 type Command struct {
 	manifest          *model.Manifest
 	K8sClientProvider okteto.K8sClientProviderWithLogger
-	AnalyticsTracker  analyticsTrackerInterface
+	AnalyticsTracker  buildTrackerInterface
+	InsightsTracker   buildDeployTrackerInterface
 
 	IoCtrl    *io.Controller
 	K8sLogger *io.K8sLogger
@@ -85,7 +95,7 @@ func (mc *Command) RunInitV2(ctx context.Context, opts *InitOpts) (*model.Manife
 	manifest := model.NewManifest()
 	var err error
 	if !opts.Overwrite {
-		manifest, err = model.GetManifestV2(opts.DevPath)
+		manifest, err = model.GetManifestV2(opts.DevPath, afero.NewOsFs())
 		if err != nil && !errors.Is(err, discovery.ErrOktetoManifestNotFound) {
 			return nil, err
 		}
@@ -223,22 +233,25 @@ func (mc *Command) deploy(ctx context.Context, opts *InitOpts) error {
 	if err != nil {
 		return err
 	}
+
+	onBuildFinish := []buildv2.OnBuildFinish{
+		mc.AnalyticsTracker.TrackImageBuild,
+		mc.InsightsTracker.TrackImageBuild,
+	}
 	c := &deploy.Command{
-		GetDeployer:        deploy.GetDeployer,
-		GetManifest:        mc.getManifest,
-		TempKubeconfigFile: deploy.GetTempKubeConfigFile(mc.manifest.Name),
-		K8sClientProvider:  mc.K8sClientProvider,
-		Builder:            buildv2.NewBuilderFromScratch(mc.AnalyticsTracker, mc.IoCtrl),
-		GetExternalControl: deploy.NewDeployExternalK8sControl,
-		Fs:                 afero.NewOsFs(),
-		CfgMapHandler:      deploy.NewConfigmapHandler(mc.K8sClientProvider, mc.K8sLogger),
-		PipelineCMD:        pc,
-		DeployWaiter:       deploy.NewDeployWaiter(mc.K8sClientProvider, mc.K8sLogger),
-		EndpointGetter:     deploy.NewEndpointGetter,
-		IoCtrl:             mc.IoCtrl,
+		GetDeployer:       deploy.GetDeployer,
+		GetManifest:       mc.getManifest,
+		K8sClientProvider: mc.K8sClientProvider,
+		Builder:           buildv2.NewBuilderFromScratch(mc.IoCtrl, onBuildFinish),
+		Fs:                afero.NewOsFs(),
+		CfgMapHandler:     deploy.NewConfigmapHandler(mc.K8sClientProvider, mc.K8sLogger),
+		PipelineCMD:       pc,
+		DeployWaiter:      deploy.NewDeployWaiter(mc.K8sClientProvider, mc.K8sLogger),
+		EndpointGetter:    deploy.NewEndpointGetter,
+		IoCtrl:            mc.IoCtrl,
 	}
 
-	err = c.RunDeploy(ctx, &deploy.Options{
+	err = c.Run(ctx, &deploy.Options{
 		Name:         mc.manifest.Name,
 		ManifestPath: filepath.Join(opts.Workdir, opts.DevPath),
 		Timeout:      5 * time.Minute,
@@ -356,7 +369,7 @@ func getPathFromApp(wd, appName string) string {
 }
 
 func createFromCompose(composePath string) (*model.Manifest, error) {
-	stack, err := model.LoadStack("", []string{composePath}, true)
+	stack, err := model.LoadStack("", []string{composePath}, true, afero.NewOsFs())
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +478,7 @@ func inferBuildSectionFromDockerfiles(cwd string, dockerfiles []string) (build.M
 }
 
 func inferDeploySection(cwd string) (*model.DeployInfo, error) {
-	m, err := model.GetInferredManifest(cwd)
+	m, err := model.GetInferredManifest(cwd, afero.NewOsFs())
 	if err != nil {
 		return nil, err
 	}
@@ -493,7 +506,7 @@ func inferDevsSection(cwd string) (model.ManifestDevs, error) {
 		if !f.IsDir() {
 			continue
 		}
-		dev, err := model.GetManifestV2(f.Name())
+		dev, err := model.GetManifestV2(f.Name(), afero.NewOsFs())
 		if err != nil {
 			oktetoLog.Debugf("could not detect any okteto manifest on %s", f.Name())
 			continue
@@ -507,7 +520,7 @@ func inferDevsSection(cwd string) (model.ManifestDevs, error) {
 	return devs, nil
 }
 
-func (mc *Command) getManifest(path string) (*model.Manifest, error) {
+func (mc *Command) getManifest(path string, fs afero.Fs) (*model.Manifest, error) {
 	if mc.manifest != nil {
 		// Deepcopy so it does not get overwritten these changes
 		manifest := *mc.manifest
@@ -527,7 +540,7 @@ func (mc *Command) getManifest(path string) (*model.Manifest, error) {
 		manifest.Deploy = d
 		return &manifest, nil
 	}
-	return model.GetManifestV2(path)
+	return model.GetManifestV2(path, fs)
 }
 
 func configureAutoCreateDev(manifest *model.Manifest) error {

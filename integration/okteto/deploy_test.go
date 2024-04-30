@@ -43,7 +43,7 @@ const (
     ports:
     - 8080
   nginx:
-    image: nginx
+    build: nginx
     volumes:
     - ./nginx/nginx.conf:/tmp/nginx.conf
     command: /bin/bash -c "envsubst < /tmp/nginx.conf > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
@@ -84,6 +84,9 @@ destroy:
   - name: Mask command destroy
     command: echo $TOMASK
 `
+	nginxDockerfile = `FROM nginx
+COPY ./nginx.conf /tmp/nginx.conf
+`
 )
 
 func TestDeploySuccessOutput(t *testing.T) {
@@ -95,7 +98,7 @@ func TestDeploySuccessOutput(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, createComposeScenario(dir))
 
-	testNamespace := integration.GetTestNamespace("TestSuccessOutput", user)
+	testNamespace := integration.GetTestNamespace("SuccessOutput", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -161,7 +164,7 @@ func TestDeployWithNonSanitizedOK(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, createComposeScenario(dir))
 
-	testNamespace := integration.GetTestNamespace("TestDeployWithNonSanitizedOK", user)
+	testNamespace := integration.GetTestNamespace("DeployWithNonSanitizedOK", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -196,7 +199,7 @@ func TestCmdFailOutput(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, createCommandFailureManifest(dir))
 
-	testNamespace := integration.GetTestNamespace("TestCmdFailOutput", user)
+	testNamespace := integration.GetTestNamespace("CmdFailOutput", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -261,7 +264,7 @@ func TestRemoteMaskVariables(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, createCommandWitMaskValuesManifest(dir))
 
-	testNamespace := integration.GetTestNamespace("TestRemoteMaskVariables", user)
+	testNamespace := integration.GetTestNamespace("RemoteMaskVariables", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -277,7 +280,7 @@ func TestRemoteMaskVariables(t *testing.T) {
 		OktetoHome: dir,
 		Token:      token,
 		IsRemote:   true,
-		Variables:  "TOMASK=hola-mundo",
+		Variables:  []string{"TOMASK=hola-mundo"},
 	}
 	require.NoError(t, commands.RunOktetoDeploy(oktetoPath, deployOptions))
 
@@ -368,7 +371,7 @@ func TestComposeFailOutput(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, createFailCompose(dir))
 
-	testNamespace := integration.GetTestNamespace("TestComposeFailOutput", user)
+	testNamespace := integration.GetTestNamespace("ComposeFailOutput", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -461,6 +464,10 @@ func createComposeScenario(dir string) error {
 		return err
 	}
 
+	if err := createNginxDockerfile(dir); err != nil {
+		return err
+	}
+
 	if err := createAppDockerfile(dir); err != nil {
 		return err
 	}
@@ -482,6 +489,15 @@ func createAppDockerfile(dir string) error {
 	appDockerfilePath := filepath.Join(dir, "app", "Dockerfile")
 	appDockerfileContent := []byte(appDockerfile)
 	if err := os.WriteFile(appDockerfilePath, appDockerfileContent, 0600); err != nil {
+		return err
+	}
+	return nil
+}
+
+func createNginxDockerfile(dir string) error {
+	nginxDockerfilePath := filepath.Join(dir, "nginx", "Dockerfile")
+	nginxDockerfileContent := []byte(nginxDockerfile)
+	if err := os.WriteFile(nginxDockerfilePath, nginxDockerfileContent, 0600); err != nil {
 		return err
 	}
 	return nil

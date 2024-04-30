@@ -311,10 +311,25 @@ func IsInteractive() bool {
 	return log.writer.IsInteractive()
 }
 
-// AddMaskedWord adds a new word to be redacted
+// AddMaskedWord adds a new word to be redacted, only if longer than 5 chars
 func AddMaskedWord(word string) {
-	if strings.TrimSpace(word) != "" {
-		log.maskedWords = append(log.maskedWords, word)
+	clean := strings.TrimSpace(word)
+
+	// only mask words longer than 5 chars (i.e. 'true' and 'false' won't be masked)
+	minCharsToMask := 5
+	if len(clean) <= minCharsToMask {
+		return
+	}
+	log.maskedWords = append(log.maskedWords, clean)
+
+	crossPlatformCleanWord := strings.ReplaceAll(clean, "\r\n", "\n")
+	lines := strings.Split(crossPlatformCleanWord, "\n")
+	for _, line := range lines {
+		cleanLine := strings.TrimSpace(line)
+		if len(cleanLine) <= minCharsToMask {
+			continue
+		}
+		log.maskedWords = append(log.maskedWords, cleanLine)
 	}
 }
 

@@ -25,6 +25,7 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/log/io"
 	"github.com/okteto/okteto/pkg/okteto"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +43,7 @@ func Doctor(k8sLogger *io.K8sLogger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor [service]",
 		Short: "Generate a zip file with the okteto logs",
-		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#doctor"),
+		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#doctor"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			oktetoLog.Info("starting doctor command")
 			ctx := context.Background()
@@ -51,7 +52,7 @@ func Doctor(k8sLogger *io.K8sLogger) *cobra.Command {
 				return oktetoErrors.ErrNotInDevContainer
 			}
 
-			manifest, err := contextCMD.LoadManifestWithContext(ctx, contextCMD.ManifestOptions{Filename: doctorOpts.DevPath, Namespace: doctorOpts.Namespace, K8sContext: doctorOpts.K8sContext})
+			manifest, err := contextCMD.LoadManifestWithContext(ctx, contextCMD.ManifestOptions{Filename: doctorOpts.DevPath, Namespace: doctorOpts.Namespace, K8sContext: doctorOpts.K8sContext}, afero.NewOsFs())
 			if err != nil {
 				return err
 			}

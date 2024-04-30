@@ -36,25 +36,35 @@ type Repository struct {
 type repositoryInterface interface {
 	isClean(ctx context.Context) (bool, error)
 	getSHA() (string, error)
-	GetLatestDirCommit(string) (string, error)
+	GetLatestDirSHA(string) (string, error)
 	GetDiffHash(string) (string, error)
+	getRepoURL() (string, error)
 }
 
 type repositoryURL struct {
 	url.URL
 }
 
-// String is a custom implementation for the url where User is removed
+// String is a custom implementation for the url where User is removed and the schema is forced to https
 func (r repositoryURL) String() string {
 	repo := r.URL
 	repo.User = nil
+
+	switch repo.Scheme {
+	case "ssh", "http":
+		repo.Scheme = "https"
+	case "https":
+	default:
+		oktetoLog.Infof("retrieved schema for %s - %s", repo, r.Scheme)
+	}
+	repo.Path = strings.TrimSuffix(repo.Path, ".git")
 	return repo.String()
 }
 
-func getURLFromPath(path string) repositoryURL {
+func newGitURL(path string) repositoryURL {
 	url, err := giturls.Parse(path)
 	if err != nil {
-		oktetoLog.Infof("could not parse url: %w", err)
+		oktetoLog.Infof("could not parse url: %s", err)
 	}
 
 	return repositoryURL{
@@ -64,17 +74,20 @@ func getURLFromPath(path string) repositoryURL {
 
 // NewRepository creates a repository controller
 func NewRepository(path string) Repository {
-	repoURL := getURLFromPath(path)
-
 	var controller repositoryInterface = newGitRepoController(path)
 	// check if we are inside a remote deploy
 	if v := os.Getenv(constants.OktetoDeployRemote); v != "" {
 		sha := os.Getenv(constants.OktetoGitCommitEnvVar)
-		controller = newOktetoRemoteRepoController(sha)
+		controller = newOktetoRemoteRepoController(sha, path)
 	}
+	repoURL, err := controller.getRepoURL()
+	if err != nil {
+		oktetoLog.Infof("could not get repo url: %s", err)
+	}
+	url := newGitURL(repoURL)
 	return Repository{
 		path:    path,
-		url:     &repoURL,
+		url:     &url,
 		control: controller,
 	}
 }
@@ -116,8 +129,8 @@ func (r Repository) GetAnonymizedRepo() string {
 	return r.url.String()
 }
 
-func (r Repository) GetLatestDirCommit(dir string) (string, error) {
-	return r.control.GetLatestDirCommit(dir)
+func (r Repository) GetLatestDirSHA(dir string) (string, error) {
+	return r.control.GetLatestDirSHA(dir)
 }
 
 func (r Repository) GetDiffHash(dir string) (string, error) {

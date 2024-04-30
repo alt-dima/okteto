@@ -39,6 +39,21 @@ const (
 	httpsScheme = "https"
 )
 
+type Namer struct {
+	Workdir      string
+	KubeClient   kubernetes.Interface
+	ManifestName string
+	ManifestPath string
+}
+
+func (na Namer) ResolveName(ctx context.Context) string {
+	if na.ManifestName != "" {
+		return na.ManifestName
+	}
+	inferer := devenvironment.NewNameInferer(na.KubeClient)
+	return inferer.InferName(ctx, na.Workdir, okteto.GetContext().Namespace, na.ManifestPath)
+}
+
 func setDeployOptionsValuesFromManifest(ctx context.Context, deployOptions *Options, cwd string, c kubernetes.Interface, k8sLogger *ioCtrl.K8sLogger) error {
 
 	if deployOptions.Manifest.Context == "" {
@@ -49,17 +64,20 @@ func setDeployOptionsValuesFromManifest(ctx context.Context, deployOptions *Opti
 	}
 
 	if deployOptions.Name == "" {
-		if deployOptions.Manifest.Name != "" {
-			deployOptions.Name = deployOptions.Manifest.Name
-		} else {
-			c, _, err := okteto.NewK8sClientProviderWithLogger(k8sLogger).Provide(okteto.GetContext().Cfg)
-			if err != nil {
-				return err
-			}
-			inferer := devenvironment.NewNameInferer(c)
-			deployOptions.Name = inferer.InferName(ctx, cwd, okteto.GetContext().Namespace, deployOptions.ManifestPathFlag)
-			deployOptions.Manifest.Name = deployOptions.Name
+		c, _, err := okteto.NewK8sClientProviderWithLogger(k8sLogger).Provide(okteto.GetContext().Cfg)
+		if err != nil {
+			return err
 		}
+
+		n := Namer{
+			Workdir:      cwd,
+			KubeClient:   c,
+			ManifestName: deployOptions.Manifest.Name,
+			ManifestPath: deployOptions.ManifestPathFlag,
+		}
+		name := n.ResolveName(ctx)
+		deployOptions.Name = name
+		deployOptions.Manifest.Name = name
 
 	} else {
 		if deployOptions.Manifest != nil {
@@ -75,18 +93,18 @@ func setDeployOptionsValuesFromManifest(ctx context.Context, deployOptions *Opti
 	if deployOptions.Manifest.Deploy != nil && deployOptions.Manifest.Deploy.ComposeSection != nil && deployOptions.Manifest.Deploy.ComposeSection.Stack != nil {
 
 		mergeServicesToDeployFromOptionsAndManifest(deployOptions)
-		if len(deployOptions.servicesToDeploy) == 0 {
-			deployOptions.servicesToDeploy = []string{}
+		if len(deployOptions.ServicesToDeploy) == 0 {
+			deployOptions.ServicesToDeploy = []string{}
 			for service := range deployOptions.Manifest.Deploy.ComposeSection.Stack.Services {
-				deployOptions.servicesToDeploy = append(deployOptions.servicesToDeploy, service)
+				deployOptions.ServicesToDeploy = append(deployOptions.ServicesToDeploy, service)
 			}
 		}
 		if len(deployOptions.Manifest.Deploy.ComposeSection.ComposesInfo) > 0 {
-			if err := stack.ValidateDefinedServices(deployOptions.Manifest.Deploy.ComposeSection.Stack, deployOptions.servicesToDeploy); err != nil {
+			if err := stack.ValidateDefinedServices(deployOptions.Manifest.Deploy.ComposeSection.Stack, deployOptions.ServicesToDeploy); err != nil {
 				return err
 			}
-			deployOptions.servicesToDeploy = stack.AddDependentServicesIfNotPresent(ctx, deployOptions.Manifest.Deploy.ComposeSection.Stack, deployOptions.servicesToDeploy, c)
-			deployOptions.Manifest.Deploy.ComposeSection.ComposesInfo[0].ServicesToDeploy = deployOptions.servicesToDeploy
+			deployOptions.ServicesToDeploy = stack.AddDependentServicesIfNotPresent(ctx, deployOptions.Manifest.Deploy.ComposeSection.Stack, deployOptions.ServicesToDeploy, c)
+			deployOptions.Manifest.Deploy.ComposeSection.ComposesInfo[0].ServicesToDeploy = deployOptions.ServicesToDeploy
 		}
 	}
 	return nil
@@ -104,7 +122,7 @@ func mergeServicesToDeployFromOptionsAndManifest(deployOptions *Options) {
 	}
 
 	commandDeclaredServicesToDeploy := map[string]bool{}
-	for _, service := range deployOptions.servicesToDeploy {
+	for _, service := range deployOptions.ServicesToDeploy {
 		commandDeclaredServicesToDeploy[service] = true
 	}
 
@@ -112,11 +130,11 @@ func mergeServicesToDeployFromOptionsAndManifest(deployOptions *Options) {
 		return
 	}
 
-	if len(deployOptions.servicesToDeploy) > 0 && len(manifestDeclaredServicesToDeploy) > 0 {
+	if len(deployOptions.ServicesToDeploy) > 0 && len(manifestDeclaredServicesToDeploy) > 0 {
 		oktetoLog.Warning("overwriting manifest's `services to deploy` with command line arguments")
 	}
-	if len(deployOptions.servicesToDeploy) == 0 && len(manifestDeclaredServicesToDeploy) > 0 {
-		deployOptions.servicesToDeploy = manifestDeclaredServicesToDeploy
+	if len(deployOptions.ServicesToDeploy) == 0 && len(manifestDeclaredServicesToDeploy) > 0 {
+		deployOptions.ServicesToDeploy = manifestDeclaredServicesToDeploy
 	}
 }
 
@@ -153,7 +171,7 @@ func (dc *Command) addEnvVars(cwd string) {
 			oktetoLog.Infof("could not retrieve sha: %s", err)
 		}
 		isClean := true
-		if !dc.isRemote {
+		if !dc.IsRemote {
 			isClean, err = repository.NewRepository(cwd).IsClean()
 			if err != nil {
 				oktetoLog.Infof("could not status: %s", err)

@@ -38,6 +38,7 @@ import (
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
 	"github.com/okteto/okteto/pkg/types"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 )
@@ -61,7 +62,7 @@ func Push(ctx context.Context) *cobra.Command {
 		Hidden: true,
 		Use:    "push [service]",
 		Short:  "Build, push and redeploy source code to the target app",
-		Args:   utils.MaximumNArgsAccepted(1, "https://www.okteto.com/docs/0.10/reference/cli/#push"),
+		Args:   utils.MaximumNArgsAccepted(1, "https://www.okteto.com/docs/reference/okteto-cli/"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !env.LoadBoolean(constants.OktetoWithinDeployCommandContextEnvVar) {
 				oktetoLog.Warning("'okteto push' is deprecated in favor of 'okteto deploy', and will be removed in a future version")
@@ -92,7 +93,7 @@ func Push(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			manifest, err := utils.DeprecatedLoadManifestOrDefault(pushOpts.DevPath, pushOpts.AppName)
+			manifest, err := utils.DeprecatedLoadManifestOrDefault(pushOpts.DevPath, pushOpts.AppName, afero.NewOsFs())
 			if err != nil {
 				return err
 			}
@@ -125,7 +126,7 @@ func Push(ctx context.Context) *cobra.Command {
 			if pushOpts.AutoDeploy {
 				oktetoLog.Warning(`The 'deploy' flag is deprecated and will be removed in a future version.
     Set the 'autocreate' field in your okteto manifest to get the same behavior.
-    More information is available here: https://okteto.com/docs/reference/cli#up`)
+    More information is available here: https://okteto.com/docs/reference/okteto-cli#up`)
 			}
 
 			if !dev.Autocreate {
@@ -170,7 +171,7 @@ func runPush(ctx context.Context, dev *model.Dev, pushOpts *pushOptions, c *kube
 				E: fmt.Errorf("application '%s' not found in namespace '%s'", dev.Name, dev.Namespace),
 				Hint: `Verify that your application is running and your okteto context is pointing to the right namespace
     Or set the 'autocreate' field in your okteto manifest if you want to create a standalone development container
-    More information is available here: https://okteto.com/docs/reference/cli#up`,
+    More information is available here: https://okteto.com/docs/reference/okteto-cli#up`,
 			}
 		}
 
