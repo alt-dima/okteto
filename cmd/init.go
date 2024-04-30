@@ -28,16 +28,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type analyticsTrackerInterface interface {
-	TrackImageBuild(meta ...*analytics.ImageBuildMetadata)
+type buildTrackerInterface interface {
+	TrackImageBuild(ctx context.Context, meta *analytics.ImageBuildMetadata)
+}
+
+type deployTrackerInterface interface {
+	TrackDeploy(ctx context.Context, name, namespace string, success bool)
+}
+
+type buildDeployTrackerInterface interface {
+	buildTrackerInterface
+	deployTrackerInterface
 }
 
 // Init creates okteto manifest
-func Init(at analyticsTrackerInterface, ioCtrl *io.Controller) *cobra.Command {
+func Init(at buildTrackerInterface, insights buildDeployTrackerInterface, ioCtrl *io.Controller) *cobra.Command {
 	opts := &manifest.InitOpts{}
 	cmd := &cobra.Command{
 		Use:   "init",
-		Args:  utils.NoArgsAccepted("https://okteto.com/docs/reference/cli/#init"),
+		Args:  utils.NoArgsAccepted("https://okteto.com/docs/reference/okteto-cli/#init"),
 		Short: "Automatically generate your okteto manifest",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
@@ -68,6 +77,7 @@ func Init(at analyticsTrackerInterface, ioCtrl *io.Controller) *cobra.Command {
 			mc := &manifest.Command{
 				K8sClientProvider: okteto.NewK8sClientProvider(),
 				AnalyticsTracker:  at,
+				InsightsTracker:   insights,
 				IoCtrl:            ioCtrl,
 			}
 

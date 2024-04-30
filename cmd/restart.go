@@ -28,6 +28,7 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -40,13 +41,13 @@ func Restart() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "restart [service]",
 		Short:  "Restart the deployments listed in the services field of a development container",
-		Args:   utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#restart"),
+		Args:   utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#restart"),
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
 			manifestOpts := contextCMD.ManifestOptions{Filename: devPath, Namespace: namespace, K8sContext: k8sContext}
-			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts)
+			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts, afero.NewOsFs())
 			if err != nil {
 				return err
 			}

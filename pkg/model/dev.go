@@ -31,8 +31,10 @@ import (
 	"github.com/okteto/okteto/pkg/constants"
 	"github.com/okteto/okteto/pkg/env"
 	oktetoErrors "github.com/okteto/okteto/pkg/errors"
+	"github.com/okteto/okteto/pkg/filesystem"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/model/forward"
+	"github.com/spf13/afero"
 	yaml "gopkg.in/yaml.v2"
 	apiv1 "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
@@ -41,7 +43,7 @@ import (
 
 var (
 	// OktetoBinImageTag image tag with okteto internal binaries
-	OktetoBinImageTag = "okteto/bin:1.4.4"
+	OktetoBinImageTag = "okteto/bin:1.5.0"
 
 	errBadName = fmt.Errorf("Invalid name: must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character")
 
@@ -237,7 +239,7 @@ type Selector map[string]string
 type Annotations map[string]string
 
 // Get returns a Dev object from a given file
-func Get(devPath string) (*Manifest, error) {
+func Get(devPath string, fs afero.Fs) (*Manifest, error) {
 	b, err := os.ReadFile(devPath)
 	if err != nil {
 		return nil, err
@@ -253,7 +255,7 @@ func Get(devPath string) (*Manifest, error) {
 			return nil, err
 		}
 
-		if err := dev.PreparePathsAndExpandEnvFiles(devPath); err != nil {
+		if err := dev.PreparePathsAndExpandEnvFiles(devPath, fs); err != nil {
 			return nil, err
 		}
 	}
@@ -284,7 +286,7 @@ func NewDev() *Dev {
 }
 
 // loadAbsPaths makes every path used in the dev struct an absolute paths
-func (dev *Dev) loadAbsPaths(devPath string) error {
+func (dev *Dev) loadAbsPaths(devPath string, fs afero.Fs) error {
 	devDir, err := filepath.Abs(filepath.Dir(devPath))
 	if err != nil {
 		return err
@@ -292,42 +294,54 @@ func (dev *Dev) loadAbsPaths(devPath string) error {
 
 	if dev.Image != nil {
 		if uri, err := url.ParseRequestURI(dev.Image.Context); err != nil || (uri != nil && (uri.Scheme == "" || uri.Host == "")) {
-			dev.Image.Context = loadAbsPath(devDir, dev.Image.Context)
-			dev.Image.Dockerfile = loadAbsPath(devDir, dev.Image.Dockerfile)
+			dev.Image.Context = loadAbsPath(devDir, dev.Image.Context, fs)
+			dev.Image.Dockerfile = loadAbsPath(devDir, dev.Image.Dockerfile, fs)
 		}
 	}
 
 	if dev.Push != nil {
 		if uri, err := url.ParseRequestURI(dev.Push.Context); err != nil || (uri != nil && (uri.Scheme == "" || uri.Host == "")) {
-			dev.Push.Context = loadAbsPath(devDir, dev.Push.Context)
-			dev.Push.Dockerfile = loadAbsPath(devDir, dev.Push.Dockerfile)
+			dev.Push.Context = loadAbsPath(devDir, dev.Push.Context, fs)
+			dev.Push.Dockerfile = loadAbsPath(devDir, dev.Push.Dockerfile, fs)
 		}
 	}
 
-	dev.loadVolumeAbsPaths(devDir)
+	dev.loadVolumeAbsPaths(devDir, fs)
 	for _, s := range dev.Services {
-		s.loadVolumeAbsPaths(devDir)
+		s.loadVolumeAbsPaths(devDir, fs)
 	}
 	return nil
 }
 
-func (dev *Dev) loadVolumeAbsPaths(folder string) {
+func (dev *Dev) loadVolumeAbsPaths(folder string, fs afero.Fs) {
 	for i := range dev.Volumes {
 		if dev.Volumes[i].LocalPath == "" {
 			continue
 		}
-		dev.Volumes[i].LocalPath = loadAbsPath(folder, dev.Volumes[i].LocalPath)
+		dev.Volumes[i].LocalPath = loadAbsPath(folder, dev.Volumes[i].LocalPath, fs)
 	}
 	for i := range dev.Sync.Folders {
-		dev.Sync.Folders[i].LocalPath = loadAbsPath(folder, dev.Sync.Folders[i].LocalPath)
+		dev.Sync.Folders[i].LocalPath = loadAbsPath(folder, dev.Sync.Folders[i].LocalPath, fs)
 	}
 }
 
-func loadAbsPath(folder, path string) string {
+func loadAbsPath(folder, path string, fs afero.Fs) string {
 	if filepath.IsAbs(path) {
+		realpath, err := filesystem.Realpath(fs, path)
+		if err != nil {
+			oktetoLog.Infof("error getting real path of %s: %s", path, err.Error())
+			return path
+		}
+		return realpath
+	}
+
+	path = filepath.Join(folder, path)
+	realpath, err := filesystem.Realpath(fs, path)
+	if err != nil {
+		oktetoLog.Infof("error getting real path of %s: %s", path, err.Error())
 		return path
 	}
-	return filepath.Join(folder, path)
+	return realpath
 }
 
 func (dev *Dev) expandEnvVars() error {
@@ -683,8 +697,8 @@ func (dev *Dev) Validate() error {
 }
 
 // PreparePathsAndExpandEnvFiles calls other methods required to have the dev ready to use
-func (dev *Dev) PreparePathsAndExpandEnvFiles(manifestPath string) error {
-	if err := dev.loadAbsPaths(manifestPath); err != nil {
+func (dev *Dev) PreparePathsAndExpandEnvFiles(manifestPath string, fs afero.Fs) error {
+	if err := dev.loadAbsPaths(manifestPath, fs); err != nil {
 		return err
 	}
 
@@ -1128,14 +1142,14 @@ func GetTimeout() (time.Duration, error) {
 
 func (dev *Dev) translateDeprecatedMetadataFields() {
 	if len(dev.Labels) > 0 {
-		oktetoLog.Warning("The field 'labels' is deprecated and will be removed in a future version. Use the field 'selector' instead (https://okteto.com/docs/reference/manifest/#selector)")
+		oktetoLog.Warning("The field 'labels' is deprecated and will be removed in a future version. Use the field 'selector' instead (https://okteto.com/docs/reference/okteto-manifest/#selector)")
 		for k, v := range dev.Labels {
 			dev.Selector[k] = v
 		}
 	}
 
 	if len(dev.Annotations) > 0 {
-		oktetoLog.Warning("The field 'annotations' is deprecated and will be removed in a future version. Use the field 'metadata.annotations' instead (https://okteto.com/docs/reference/manifest/#metadata)")
+		oktetoLog.Warning("The field 'annotations' is deprecated and will be removed in a future version. Use the field 'metadata.annotations' instead (https://okteto.com/docs/reference/okteto-manifest/#metadata)")
 		for k, v := range dev.Annotations {
 			dev.Metadata.Annotations[k] = v
 		}
@@ -1149,7 +1163,7 @@ func (dev *Dev) translateDeprecatedMetadataFields() {
 		}
 
 		if len(s.Annotations) > 0 {
-			oktetoLog.Warning("The field 'annotations' is deprecated and will be removed in a future version. Use the field '%s.metadata.annotations' instead (https://okteto.com/docs/reference/manifest/#metadata)", s.Name)
+			oktetoLog.Warning("The field 'annotations' is deprecated and will be removed in a future version. Use the field '%s.metadata.annotations' instead (https://okteto.com/docs/reference/okteto-manifest/#metadata)", s.Name)
 			for k, v := range s.Annotations {
 				dev.Services[indx].Metadata.Annotations[k] = v
 			}
@@ -1158,7 +1172,7 @@ func (dev *Dev) translateDeprecatedMetadataFields() {
 }
 
 func (service *Dev) validateForExtraFields() error {
-	errorMessage := "%q is not supported in Services. Please visit https://www.okteto.com/docs/reference/manifest/#services-object-optional for documentation"
+	errorMessage := "%q is not supported in Services. Please visit https://www.okteto.com/docs/reference/okteto-manifest/#services-object-optional for documentation"
 	if service.Username != "" {
 		return fmt.Errorf(errorMessage, "username")
 	}

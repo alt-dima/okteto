@@ -53,6 +53,7 @@ const (
 	actionLockField = "actionLock"
 	actionNameField = "actionName"
 	variablesField  = "variables"
+	PhasesField     = "phases"
 
 	actionDefaultName = "cli"
 
@@ -71,6 +72,9 @@ const (
 	// Note that the is the limit after encoding the logs to base64 which is how
 	// the logs are stored in the configmap.
 	maxLogOutput = 800 << (10 * 1)
+
+	// ConfigmapNamePrefix prefix used by the configmaps created by okteto to handle dev environments information
+	ConfigmapNamePrefix = "okteto-git-"
 )
 
 // maxLogOutputRaw is the maximum size we allow to allocate for logs before
@@ -90,6 +94,25 @@ type CfgData struct {
 	Manifest   []byte
 	Icon       string
 	Variables  []string
+}
+
+type phaseJSON struct {
+	Name     string  `json:"name"`
+	Duration float64 `json:"duration"`
+}
+
+// GetConfigmapDependencyEnv returns Data["variables"] content from Configmap
+func GetConfigmapDependencyEnv(ctx context.Context, name, namespace string, c kubernetes.Interface) (string, error) {
+	cmap, err := configmaps.Get(ctx, TranslatePipelineName(name), namespace, c)
+	if err != nil {
+		if !oktetoErrors.IsNotFound(err) {
+			return "", err
+		}
+		// if err Not Found, return empty variables but no error
+		return "", nil
+	}
+
+	return cmap.Data[constants.OktetoDependencyEnvsKey], nil
 }
 
 // GetConfigmapVariablesEncoded returns Data["variables"] content from Configmap
@@ -186,9 +209,46 @@ func UpdateEnvs(ctx context.Context, name, namespace string, envs []string, c ku
 	return nil
 }
 
+// AddPhaseDuration adds a new phase to the configmap with the duration in seconds
+func AddPhaseDuration(ctx context.Context, name, namespace, phase string, duration time.Duration, c kubernetes.Interface) error {
+	cmap, err := configmaps.Get(ctx, TranslatePipelineName(name), namespace, c)
+	if err != nil {
+		return err
+	}
+	val, ok := cmap.Data[PhasesField]
+	phases := []phaseJSON{}
+	if ok {
+		if err := json.Unmarshal([]byte(val), &phases); err != nil {
+			return err
+		}
+	}
+	// If the phase already exists, update the duration
+	updatedPhase := false
+	for idx, p := range phases {
+		if p.Name == phase {
+			phases[idx].Duration = duration.Seconds()
+			updatedPhase = true
+			break
+		}
+	}
+	// If the phase doesn't exist, add it
+	if !updatedPhase {
+		phases = append(phases, phaseJSON{
+			Name:     phase,
+			Duration: duration.Seconds(),
+		})
+	}
+	encodedPhases, err := json.Marshal(phases)
+	if err != nil {
+		return err
+	}
+	cmap.Data[PhasesField] = string(encodedPhases)
+	return configmaps.Deploy(ctx, cmap, cmap.Namespace, c)
+}
+
 // TranslatePipelineName translate the name into the configmap name
 func TranslatePipelineName(name string) string {
-	return fmt.Sprintf("okteto-git-%s", format.ResourceK8sMetaString(name))
+	return fmt.Sprintf("%s%s", ConfigmapNamePrefix, format.ResourceK8sMetaString(name))
 }
 
 func translateOutput(output *bytes.Buffer) []byte {

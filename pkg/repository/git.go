@@ -16,18 +16,25 @@ package repository
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
+	giturls "github.com/chainguard-dev/git-urls"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/okteto/okteto/pkg/filesystem"
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/spf13/afero"
+)
+
+const (
+	gitOperationTimeout = 5 * time.Second
 )
 
 var (
@@ -72,6 +79,52 @@ func (r gitRepoController) calculateIsClean(ctx context.Context) (bool, error) {
 	}
 
 	return status.IsClean(), nil
+}
+
+func (r gitRepoController) getRepoURL() (string, error) {
+	url, err := giturls.Parse(r.path)
+	if err != nil {
+		oktetoLog.Infof("could not parse url: %s", err)
+	}
+	if url.Scheme != "file" {
+		return r.sanitiseURL(url.String()), nil
+	}
+
+	repo, err := git.PlainOpen(r.path)
+	if err != nil {
+		return "", fmt.Errorf("failed to analyze git repo: %w", err)
+	}
+	origin, err := repo.Remote("origin")
+	if err != nil {
+		if err != git.ErrRemoteNotFound {
+			return "", fmt.Errorf("failed to get the git repo's remote configuration: %w", err)
+		}
+	}
+
+	if origin != nil {
+		return r.sanitiseURL(origin.Config().URLs[0]), nil
+	}
+
+	remotes, err := repo.Remotes()
+	if err != nil {
+		return "", fmt.Errorf("failed to get git repo's remote information: %w", err)
+	}
+
+	if len(remotes) == 0 {
+		return "", fmt.Errorf("git repo doesn't have any remote")
+	}
+
+	return r.sanitiseURL(remotes[0].Config().URLs[0]), nil
+}
+
+func (r gitRepoController) sanitiseURL(u string) string {
+	url, err := giturls.Parse(u)
+	if err != nil {
+		oktetoLog.Infof("could not parse url: %s", err)
+		return u
+	}
+	url.Path = strings.Replace(url.Path, "//", "/", -1)
+	return url.String()
 }
 
 // isClean checks if the repository have changes over the commit
@@ -133,7 +186,8 @@ type commitResponse struct {
 	commit string
 }
 
-func (r gitRepoController) GetLatestDirCommit(contextDir string) (string, error) {
+// GetLatestDirSHA It calculates a sha of the contextDir specified as parameter based on the content
+func (r gitRepoController) GetLatestDirSHA(contextDir string) (string, error) {
 	// We use context.TODO() in a few places to call isClean, so let's make sure
 	// we set proper internal timeouts to not leak goroutines
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -142,10 +196,8 @@ func (r gitRepoController) GetLatestDirCommit(contextDir string) (string, error)
 	timeoutCh := make(chan struct{})
 	ch := make(chan commitResponse)
 
-	timeout := 1 * time.Second
-
 	go func() {
-		time.Sleep(timeout)
+		time.Sleep(gitOperationTimeout)
 		close(timeoutCh)
 		cancel()
 		ch <- commitResponse{
@@ -155,7 +207,7 @@ func (r gitRepoController) GetLatestDirCommit(contextDir string) (string, error)
 	}()
 
 	go func() {
-		commit, err := r.calculateLatestDirCommit(ctx, contextDir)
+		commit, err := r.calculateLatestDirSHA(ctx, contextDir)
 		select {
 		case <-timeoutCh:
 		case ch <- commitResponse{
@@ -194,8 +246,6 @@ func (r gitRepoController) GetDiffHash(contextDir string) (string, error) {
 	diffCh := make(chan diffResponse)
 	untrackedFilesCh := make(chan untrackedFilesResponse)
 
-	timeout := 1 * time.Second
-
 	repo, err := r.repoGetter.get(r.path)
 	if err != nil {
 		return "", fmt.Errorf("failed to analyze git repo: %w", err)
@@ -203,12 +253,16 @@ func (r gitRepoController) GetDiffHash(contextDir string) (string, error) {
 
 	// go func that cancels the context after the timeout
 	go func() {
-		time.Sleep(timeout)
+		time.Sleep(gitOperationTimeout)
 		close(timeoutCh)
 		cancel()
 		diffCh <- diffResponse{
 			diff: "",
 			err:  errTimeoutExceeded,
+		}
+		untrackedFilesCh <- untrackedFilesResponse{
+			untrackedFilesDiff: "",
+			err:                errTimeoutExceeded,
 		}
 	}()
 
@@ -259,8 +313,10 @@ func (r gitRepoController) GetDiffHash(contextDir string) (string, error) {
 		return "", untrackedFilesResponse.err
 	}
 
-	diffHash := sha256.Sum256([]byte(fmt.Sprintf("%s%s", diffResponse.diff, untrackedFilesResponse.untrackedFilesDiff)))
-	return fmt.Sprintf("%x", diffHash), nil
+	hashFrom := fmt.Sprintf("%s-%s", diffResponse.diff, untrackedFilesResponse.untrackedFilesDiff)
+	oktetoLog.Infof("hashing diff: %s", hashFrom)
+	diffHash := sha256.Sum256([]byte(hashFrom))
+	return hex.EncodeToString(diffHash[:]), nil
 }
 
 func (r gitRepoController) getUntrackedContent(files []string) (string, error) {
@@ -276,13 +332,13 @@ func (r gitRepoController) getUntrackedContent(files []string) (string, error) {
 	return totalContent, nil
 }
 
-func (r gitRepoController) calculateLatestDirCommit(ctx context.Context, contextDir string) (string, error) {
+func (r gitRepoController) calculateLatestDirSHA(ctx context.Context, contextDir string) (string, error) {
 	repo, err := r.repoGetter.get(r.path)
 	if err != nil {
 		return "", fmt.Errorf("failed to calculate latestDirCommit: failed to analyze git repo: %w", err)
 	}
 
-	return repo.GetLatestCommit(ctx, r.path, contextDir, NewLocalGit("git", &LocalExec{}))
+	return repo.GetLatestSHA(ctx, r.path, contextDir, NewLocalGit("git", &LocalExec{}))
 }
 
 type repositoryGetterInterface interface {
@@ -329,20 +385,7 @@ func (ogr oktetoGitRepository) calculateUntrackedFiles(ctx context.Context, cont
 		return []string{}, fmt.Errorf("failed to infer the git repo's current worktree: %w", err)
 	}
 
-	status, err := worktree.Status(ctx, contextDir, NewLocalGit("git", &LocalExec{}))
-	if err != nil {
-		return []string{}, fmt.Errorf("failed to infer the git repo's status: %w", err)
-	}
-
-	files := []string{}
-	for k, v := range status.status {
-		if v.Staging == git.Untracked {
-			files = append(files, k)
-		}
-	}
-
-	sort.Strings(files)
-	return files, nil
+	return worktree.ListUntrackedFiles(ctx, contextDir, NewLocalGit("git", &LocalExec{}))
 }
 
 type oktetoGitWorktree struct {
@@ -365,7 +408,7 @@ type gitRepositoryInterface interface {
 	Worktree() (gitWorktreeInterface, error)
 	Head() (*plumbing.Reference, error)
 	Log(o *git.LogOptions) (object.CommitIter, error)
-	GetLatestCommit(ctx context.Context, repoPath, dirpath string, localGit LocalGitInterface) (string, error)
+	GetLatestSHA(ctx context.Context, repoPath, dirpath string, localGit LocalGitInterface) (string, error)
 	GetDiff(ctx context.Context, repoPath, dirpath string, localGit LocalGitInterface) (string, error)
 	calculateUntrackedFiles(ctx context.Context, contextDir string) ([]string, error)
 }
@@ -373,6 +416,7 @@ type gitRepositoryInterface interface {
 type gitWorktreeInterface interface {
 	Status(context.Context, string, LocalGitInterface) (oktetoGitStatus, error)
 	GetRoot() string
+	ListUntrackedFiles(context.Context, string, LocalGitInterface) ([]string, error)
 }
 
 func (ogr oktetoGitWorktree) Status(ctx context.Context, repoRoot string, localGit LocalGitInterface) (oktetoGitStatus, error) {
@@ -397,7 +441,42 @@ func (ogr oktetoGitWorktree) Status(ctx context.Context, repoRoot string, localG
 	return oktetoGitStatus{status: status}, nil
 }
 
-func (ogr oktetoGitRepository) GetLatestCommit(ctx context.Context, repoPath, dirpath string, localGit LocalGitInterface) (string, error) {
+func (ogr oktetoGitWorktree) ListUntrackedFiles(ctx context.Context, workdir string, localGit LocalGitInterface) ([]string, error) {
+	// using git directly is faster, so we check if it's available
+	_, err := localGit.Exists()
+	if err != nil {
+		// git is not available, so we fall back on git-go
+		oktetoLog.Debug("Calculating git untrackedFiles: git is not installed, for better performances consider installing it")
+
+		status, err := ogr.Status(ctx, ogr.GetRoot(), NewLocalGit("git", &LocalExec{}))
+		if err != nil {
+			return []string{}, fmt.Errorf("failed to infer the git repo's status: %w", err)
+		}
+
+		files := []string{}
+		for k, v := range status.status {
+			if v.Staging == git.Untracked {
+				files = append(files, k)
+			}
+		}
+
+		sort.Strings(files)
+		return files, nil
+	}
+
+	untrackedFiles, err := localGit.ListUntrackedFiles(ctx, ogr.GetRoot(), workdir, 0)
+	if err != nil {
+		return []string{}, fmt.Errorf("failed to get untrackedFiles: %w", err)
+	}
+
+	return untrackedFiles, nil
+}
+
+// GetLatestSHA calculates a SHA of a repo for the specified directory (dirpath). The result depends on having
+// git installed locally or not.
+// - If git is not installed locally, it will use the latest commit of that directory.
+// - If git is installed it will get a SHA from the files tracked within that directory.
+func (ogr oktetoGitRepository) GetLatestSHA(ctx context.Context, repoPath, dirpath string, localGit LocalGitInterface) (string, error) {
 	// using git directly is faster, so we check if it's available
 	_, err := localGit.Exists()
 	if err != nil {
@@ -422,7 +501,7 @@ func (ogr oktetoGitRepository) GetLatestCommit(ctx context.Context, repoPath, di
 		return commit, nil
 	}
 
-	commit, err := localGit.GetLatestCommit(ctx, ogr.root, dirpath, 0)
+	commit, err := localGit.GetDirContentSHA(ctx, ogr.root, dirpath, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to get git status: %w", err)
 	}

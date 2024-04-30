@@ -26,7 +26,6 @@ import (
 	"github.com/okteto/okteto/pkg/model"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
-	"github.com/okteto/okteto/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,7 +50,7 @@ func (f *fakeGetter) getEnvsFromConfigMap(ctx context.Context, name, namespace s
 	return f.envs, f.err
 }
 
-func (f *fakeGetter) getEnvsFromSecrets(context.Context) ([]string, error) {
+func (f *fakeGetter) getEnvsFromPlatformVariables(context.Context) ([]string, error) {
 	return f.envs, f.err
 }
 
@@ -261,15 +260,15 @@ func TestGetEnvs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eg := envsGetter{
-				dev:                   tt.dev,
-				name:                  "test",
-				namespace:             "test",
-				client:                tt.client,
-				devContainerEnvGetter: &tt.fakeDevContainerEnvGetter,
-				configMapEnvsGetter:   &tt.fakeConfigMapEnvsGetter,
-				secretsEnvsGetter:     &tt.fakeSecretEnvsGetter,
-				imageEnvsGetter:       &tt.fakeImageEnvsGetter,
-				getDefaultLocalEnvs:   func() []string { return []string{} },
+				dev:                         tt.dev,
+				name:                        "test",
+				namespace:                   "test",
+				client:                      tt.client,
+				devContainerEnvGetter:       &tt.fakeDevContainerEnvGetter,
+				configMapEnvsGetter:         &tt.fakeConfigMapEnvsGetter,
+				platformVariablesEnvsGetter: &tt.fakeSecretEnvsGetter,
+				imageEnvsGetter:             &tt.fakeImageEnvsGetter,
+				getDefaultLocalEnvs:         func() []string { return []string{} },
 			}
 
 			envs, err := eg.getEnvs(ctx)
@@ -341,12 +340,12 @@ func TestGetEnvsError(t *testing.T) {
 					Name:      "test",
 					Namespace: "test",
 				},
-				name:                "test",
-				namespace:           "test",
-				client:              tt.client,
-				configMapEnvsGetter: &tt.fakeConfigMapEnvsGetter,
-				secretsEnvsGetter:   &tt.fakeSecretEnvsGetter,
-				imageEnvsGetter:     &tt.fakeImageEnvsGetter,
+				name:                        "test",
+				namespace:                   "test",
+				client:                      tt.client,
+				configMapEnvsGetter:         &tt.fakeConfigMapEnvsGetter,
+				platformVariablesEnvsGetter: &tt.fakeSecretEnvsGetter,
+				imageEnvsGetter:             &tt.fakeImageEnvsGetter,
 			}
 
 			envs, err := eg.getEnvs(ctx)
@@ -420,15 +419,15 @@ func TestGetEnvForHybridModeWithProperPriority(t *testing.T) {
 	}
 
 	eg := envsGetter{
-		dev:                   dev,
-		name:                  "test",
-		namespace:             "test",
-		client:                client,
-		devContainerEnvGetter: &fakeDevContainerEnvGetter,
-		configMapEnvsGetter:   &fakeConfigMapEnvsGetter,
-		secretsEnvsGetter:     &fakeSecretEnvsGetter,
-		imageEnvsGetter:       &fakeImageEnvsGetter,
-		getDefaultLocalEnvs:   func() []string { return []string{} },
+		dev:                         dev,
+		name:                        "test",
+		namespace:                   "test",
+		client:                      client,
+		devContainerEnvGetter:       &fakeDevContainerEnvGetter,
+		configMapEnvsGetter:         &fakeConfigMapEnvsGetter,
+		platformVariablesEnvsGetter: &fakeSecretEnvsGetter,
+		imageEnvsGetter:             &fakeImageEnvsGetter,
+		getDefaultLocalEnvs:         func() []string { return []string{} },
 	}
 	envs, err := eg.getEnvs(ctx)
 	require.NoError(t, err)
@@ -710,6 +709,108 @@ func TestGetEnvsFromDevContainer(t *testing.T) {
 				"FROM_CM=test",
 			},
 		},
+		{
+			name: "dev container with env var from secret source",
+			podspec: &apiv1.PodSpec{
+				Containers: []apiv1.Container{
+					{
+						EnvFrom: []apiv1.EnvFromSource{
+							{
+								SecretRef: &v1.SecretEnvSource{
+									LocalObjectReference: v1.LocalObjectReference{
+										Name: "name-of-test-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			client: fake.NewSimpleClientset(&apiv1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "name-of-test-secret",
+					Namespace: "ns-test",
+				},
+				Data: map[string][]byte{
+					"name-of-test-secret": []byte("test"),
+				},
+			}),
+			expectedEnvs: []string{
+				"name-of-test-secret=test",
+			},
+		},
+		{
+			name: "dev container with env var from secret not found",
+			podspec: &apiv1.PodSpec{
+				Containers: []apiv1.Container{
+					{
+						EnvFrom: []apiv1.EnvFromSource{
+							{
+								SecretRef: &v1.SecretEnvSource{
+									LocalObjectReference: v1.LocalObjectReference{
+										Name: "not-found-secret",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			client:       fake.NewSimpleClientset(),
+			expectedEnvs: []string{},
+			expectedErr:  fmt.Errorf("error getting kubernetes secret: secrets \"not-found-secret\" not found: the development container didn't start successfully because the kubernetes secret 'not-found-secret' was not found"),
+		},
+		{
+			name: "dev container with env var from cm",
+			podspec: &apiv1.PodSpec{
+				Containers: []apiv1.Container{
+					{
+						EnvFrom: []apiv1.EnvFromSource{
+							{
+								ConfigMapRef: &v1.ConfigMapEnvSource{
+									LocalObjectReference: v1.LocalObjectReference{
+										Name: "name-of-test-env-from-cm",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			client: fake.NewSimpleClientset(&apiv1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "name-of-test-env-from-cm",
+					Namespace: "ns-test",
+				},
+				Data: map[string]string{
+					"name-of-test-env-from-cm": "test",
+				},
+			}),
+			expectedEnvs: []string{
+				"name-of-test-env-from-cm=test",
+			},
+		},
+		{
+			name: "dev container with env var from cm not found",
+			podspec: &apiv1.PodSpec{
+				Containers: []apiv1.Container{
+					{
+						EnvFrom: []apiv1.EnvFromSource{
+							{
+								ConfigMapRef: &v1.ConfigMapEnvSource{
+									LocalObjectReference: v1.LocalObjectReference{
+										Name: "not-found",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			client:       fake.NewSimpleClientset(),
+			expectedEnvs: []string{},
+			expectedErr:  fmt.Errorf("configmaps \"not-found\" not found: the development container didn't start successfully because the kubernetes configmap 'not-found' was not found"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -724,20 +825,20 @@ func TestGetEnvsFromDevContainer(t *testing.T) {
 	}
 }
 
-type fakeUserSecretsGetter struct {
-	err     error
-	secrets []types.Secret
+type fakePlatformVariablesGetter struct {
+	err               error
+	platformVariables []env.Var
 }
 
-func (fusg fakeUserSecretsGetter) GetUserSecrets(context.Context) ([]types.Secret, error) {
-	return fusg.secrets, fusg.err
+func (f fakePlatformVariablesGetter) GetOktetoPlatformVariables(context.Context) ([]env.Var, error) {
+	return f.platformVariables, f.err
 }
 
-func TestGetEnvsFromSecrets(t *testing.T) {
+func TestGetEnvsFromPlatformVariables(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		fakeSecretsGetter fakeUserSecretsGetter
+		fakeSecretsGetter fakePlatformVariablesGetter
 		name              string
 		expectedEnvs      []string
 		isOkteto          bool
@@ -747,15 +848,15 @@ func TestGetEnvsFromSecrets(t *testing.T) {
 			isOkteto: false,
 		},
 		{
-			name:              "no user secrets",
+			name:              "no platform variables",
 			isOkteto:          true,
-			fakeSecretsGetter: fakeUserSecretsGetter{},
+			fakeSecretsGetter: fakePlatformVariablesGetter{},
 		},
 		{
-			name:     "with user secrets",
+			name:     "with platform variables",
 			isOkteto: true,
-			fakeSecretsGetter: fakeUserSecretsGetter{
-				secrets: []types.Secret{
+			fakeSecretsGetter: fakePlatformVariablesGetter{
+				platformVariables: []env.Var{
 					{
 						Name:  "FROMSECRETSTORE",
 						Value: "AVALUE",
@@ -783,10 +884,10 @@ func TestGetEnvsFromSecrets(t *testing.T) {
 				},
 				CurrentContext: "test",
 			}
-			secretEnvsGetter := secretsEnvsGetter{
-				secretsGetter: tt.fakeSecretsGetter,
+			secretEnvsGetter := platformVariablesEnvsGetter{
+				variablesGetter: tt.fakeSecretsGetter,
 			}
-			envs, err := secretEnvsGetter.getEnvsFromSecrets(ctx)
+			envs, err := secretEnvsGetter.getEnvsFromPlatformVariables(ctx)
 			require.NoError(t, err)
 			require.ElementsMatch(t, tt.expectedEnvs, envs)
 		})
@@ -794,12 +895,12 @@ func TestGetEnvsFromSecrets(t *testing.T) {
 }
 
 func TestGetEnvsFromSecretsError(t *testing.T) {
-	secretEnvsGetter := secretsEnvsGetter{
-		secretsGetter: fakeUserSecretsGetter{
+	secretEnvsGetter := platformVariablesEnvsGetter{
+		variablesGetter: fakePlatformVariablesGetter{
 			err: assert.AnError,
 		},
 	}
-	envs, err := secretEnvsGetter.getEnvsFromSecrets(context.Background())
+	envs, err := secretEnvsGetter.getEnvsFromPlatformVariables(context.Background())
 	require.Error(t, err)
 	require.Nil(t, envs)
 }

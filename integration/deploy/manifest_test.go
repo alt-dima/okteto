@@ -28,6 +28,7 @@ import (
 
 	"github.com/okteto/okteto/integration"
 	"github.com/okteto/okteto/integration/commands"
+	"github.com/okteto/okteto/pkg/cmd/build"
 	"github.com/okteto/okteto/pkg/k8s/kubeconfig"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/registry"
@@ -124,7 +125,7 @@ func TestDeployOktetoManifest(t *testing.T) {
 	require.NoError(t, createAppDockerfile(dir))
 	require.NoError(t, createK8sManifest(dir))
 
-	testNamespace := integration.GetTestNamespace("TestDeployManifestV2", user)
+	testNamespace := integration.GetTestNamespace("DeployManifestV2", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -178,7 +179,7 @@ func TestRedeployOktetoManifestForImages(t *testing.T) {
 	require.NoError(t, createAppDockerfile(dir))
 	require.NoError(t, createK8sManifest(dir))
 
-	testNamespace := integration.GetTestNamespace("TestReDeploy", user)
+	testNamespace := integration.GetTestNamespace("ReDeploy", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -250,7 +251,7 @@ func TestDeployOktetoManifestWithDestroy(t *testing.T) {
 	require.NoError(t, createAppDockerfile(dir))
 	require.NoError(t, createK8sManifest(dir))
 
-	testNamespace := integration.GetTestNamespace("TestDeployDestroy", user)
+	testNamespace := integration.GetTestNamespace("DeployDestroy", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -308,7 +309,7 @@ func TestDeployOktetoManifestExportCache(t *testing.T) {
 
 	dir := t.TempDir()
 
-	testNamespace := integration.GetTestNamespace("TestDeployExportCache", user)
+	testNamespace := integration.GetTestNamespace("DeployExportCache", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -348,14 +349,14 @@ func TestDeployOktetoManifestExportCache(t *testing.T) {
 
 // TestDeployRemoteOktetoManifest tests the following scenario:
 // - Deploying a okteto manifest in remote with a build locally
+// - Check that is not running on depot
 func TestDeployRemoteOktetoManifest(t *testing.T) {
-	t.Parallel()
 	oktetoPath, err := integration.GetOktetoPath()
 	require.NoError(t, err)
 
 	dir := t.TempDir()
 
-	testNamespace := integration.GetTestNamespace("TestDeployRemote", user)
+	testNamespace := integration.GetTestNamespace("DeployRemote", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -370,6 +371,19 @@ func TestDeployRemoteOktetoManifest(t *testing.T) {
 	require.NoError(t, createOktetoManifestWithDeployRemote(dir))
 	require.NoError(t, createAppDockerfileWithCache(dir))
 
+	buildOptions := &commands.BuildOptions{
+		Workdir:    dir,
+		Namespace:  testNamespace,
+		OktetoHome: dir,
+	}
+
+	require.NoError(t, commands.RunOktetoBuild(oktetoPath, buildOptions))
+
+	// Test that image has been built
+	require.NotEmpty(t, getImageWithSHA(fmt.Sprintf("%s/%s/app:dev", okteto.GetContext().Registry, testNamespace)))
+
+	t.Setenv(build.DepotTokenEnvVar, "fakeToken")
+	t.Setenv(build.DepotProjectEnvVar, "fakeProject")
 	deployOptions := &commands.DeployOptions{
 		Workdir:    dir,
 		Namespace:  testNamespace,
@@ -377,9 +391,6 @@ func TestDeployRemoteOktetoManifest(t *testing.T) {
 		Token:      token,
 	}
 	require.NoError(t, commands.RunOktetoDeploy(oktetoPath, deployOptions))
-
-	// Test that image has been built
-	require.NotEmpty(t, getImageWithSHA(fmt.Sprintf("%s/%s/app:dev", okteto.GetContext().Registry, testNamespace)))
 
 	destroyOptions := &commands.DestroyOptions{
 		Workdir:    dir,
@@ -402,7 +413,7 @@ func TestDeployRemoteOktetoManifestFromParentFolder(t *testing.T) {
 	dir := t.TempDir()
 	parentFolder := filepath.Join(dir, "test-parent")
 
-	testNamespace := integration.GetTestNamespace("TestDeployRemoteParent", user)
+	testNamespace := integration.GetTestNamespace("DeployRemoteParent", user)
 	namespaceOpts := &commands.NamespaceOptions{
 		Namespace:  testNamespace,
 		OktetoHome: dir,
@@ -431,9 +442,10 @@ func TestDeployRemoteOktetoManifestFromParentFolder(t *testing.T) {
 	require.NotEmpty(t, getImageWithSHA(fmt.Sprintf("%s/%s/app:dev", okteto.GetContext().Registry, testNamespace)))
 
 	destroyOptions := &commands.DestroyOptions{
-		Workdir:    dir,
-		Namespace:  testNamespace,
-		OktetoHome: dir,
+		Workdir:      parentFolder,
+		Namespace:    testNamespace,
+		OktetoHome:   dir,
+		ManifestPath: filepath.Clean("../okteto.yml"),
 	}
 	require.NoError(t, commands.RunOktetoDestroyRemote(oktetoPath, destroyOptions))
 

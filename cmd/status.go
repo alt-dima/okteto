@@ -29,6 +29,7 @@ import (
 	oktetoLog "github.com/okteto/okteto/pkg/log"
 	"github.com/okteto/okteto/pkg/okteto"
 	"github.com/okteto/okteto/pkg/syncthing"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +47,7 @@ func Status() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Status of the synchronization process",
-		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/cli/#status"),
+		Args:  utils.MaximumNArgsAccepted(1, "https://okteto.com/docs/reference/okteto-cli/#status"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
 			if okteto.InDevContainer() {
@@ -56,7 +57,7 @@ func Status() *cobra.Command {
 			ctx := context.Background()
 
 			manifestOpts := contextCMD.ManifestOptions{Filename: devPath, Namespace: namespace, K8sContext: k8sContext}
-			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts)
+			manifest, err := contextCMD.LoadManifestWithContext(ctx, manifestOpts, afero.NewOsFs())
 			if err != nil {
 				return err
 			}

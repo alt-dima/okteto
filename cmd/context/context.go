@@ -26,7 +26,7 @@ func Context(okClientProvider oktetoClientProvider) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "context",
 		Aliases: []string{"ctx"},
-		Args:    utils.NoArgsAccepted("https://okteto.com/docs/reference/cli/#context"),
+		Args:    utils.NoArgsAccepted("https://okteto.com/docs/reference/okteto-cli/#context"),
 		Short:   "Set the default context",
 		Long: `Set the default context
 
@@ -40,12 +40,6 @@ To set your default context, run the ` + "`okteto context`" + ` command:
 This will prompt you to select one of your existing contexts or to create a new one.
 `,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// read parent PersistentPreRun if any and run them before current PersistentPreRun
-			if parent := cmd.Parent(); parent != nil {
-				if parent.PersistentPreRun != nil {
-					parent.PersistentPreRun(parent, args)
-				}
-			}
 			okteto.SetInsecureSkipTLSVerifyPolicy(ctxOptions.InsecureSkipTlsVerify)
 		},
 		RunE: Use().RunE,

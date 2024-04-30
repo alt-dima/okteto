@@ -300,7 +300,7 @@ func TestGetSHA(t *testing.T) {
 	}
 }
 
-func TestGetLatestDirCommit(t *testing.T) {
+func TestGetLatestDirSHA(t *testing.T) {
 	type config struct {
 		repositoryGetter *fakeRepositoryGetter
 	}
@@ -371,7 +371,7 @@ func TestGetLatestDirCommit(t *testing.T) {
 					repoGetter: tt.config.repositoryGetter,
 				},
 			}
-			commit, err := repo.GetLatestDirCommit(tt.buildContext)
+			commit, err := repo.GetLatestDirSHA(tt.buildContext)
 			assert.ErrorIs(t, err, tt.expected.err)
 			assert.Equal(t, tt.expected.sha, commit)
 		})
@@ -416,7 +416,7 @@ func TestGetDiffHash(t *testing.T) {
 			},
 			buildContext: "test",
 			expected: expected{
-				sha: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				sha: "3973e022e93220f9212c18d0d0c543ae7c309e46640da93a4a0314de999f5112",
 				err: nil,
 			},
 		},
@@ -609,6 +609,43 @@ func TestGetUntrackedContent(t *testing.T) {
 			content, err := gitRepoController.getUntrackedContent(tt.input.files)
 			assert.Equal(t, tt.output.untrackedContent, content)
 			assert.ErrorIs(t, err, tt.output.expectedErr)
+		})
+	}
+}
+
+func Test_gitRepoController_sanitiseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid URL",
+			input:    "https://github.com/okteto/test.git",
+			expected: "https://github.com/okteto/test.git",
+		},
+		{
+			name:     "URL with double slashes",
+			input:    "https://github.com//okteto//test.git",
+			expected: "https://github.com/okteto/test.git",
+		},
+		{
+			name:     "URL with multiple double slashes",
+			input:    "https://github.com//okteto//test//.git",
+			expected: "https://github.com/okteto/test/.git",
+		},
+		{
+			name:     "URL with no double slashes",
+			input:    "https://github.com/okteto/test/.git",
+			expected: "https://github.com/okteto/test/.git",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gitRepoController{}
+			result := r.sanitiseURL(tt.input)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
